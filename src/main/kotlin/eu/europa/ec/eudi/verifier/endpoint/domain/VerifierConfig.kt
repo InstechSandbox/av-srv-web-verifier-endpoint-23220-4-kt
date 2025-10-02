@@ -321,6 +321,7 @@ enum class ProviderKind(val value: String) {
     PIDProvider("http://uri.etsi.org/Svc/Svctype/Provider/PID"),
     QEEAProvider("http://uri.etsi.org/TrstSvc/Svctype/EAA/Q"),
     PubEAAProvider("http://uri.etsi.org/TrstSvc/Svctype/EAA/Pub-EAA"),
+    PAAProvider("http://uri.etsi.org/TrstSvc/SvcInfoExt/eSigDir-1999-93-EC-TrustedList/#"),
 }
 
 data class TrustedListConfig(
@@ -328,7 +329,19 @@ data class TrustedListConfig(
     val serviceTypeFilter: ProviderKind?,
     val refreshInterval: String = "0 0 * * * *",
     val keystoreConfig: KeyStoreConfig?,
+    val type: TrustedListType = TrustedListType.LOTL,
+    val validationType: ValidationType = ValidationType.PKIX,
 )
+
+enum class TrustedListType {
+    LOTL,
+    TL,
+}
+
+enum class ValidationType {
+    DS,
+    PKIX,
+}
 
 data class KeyStoreConfig(
     val keystorePath: String,

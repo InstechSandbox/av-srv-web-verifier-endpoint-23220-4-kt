@@ -21,6 +21,7 @@ import arrow.core.mapOrAccumulate
 import arrow.core.raise.Raise
 import arrow.core.raise.either
 import arrow.core.raise.ensure
+import eu.europa.ec.eudi.verifier.endpoint.domain.TrustInfo
 import id.walt.mdoc.dataretrieval.DeviceResponse
 import id.walt.mdoc.dataretrieval.DeviceResponseStatus
 import id.walt.mdoc.doc.MDoc
@@ -32,6 +33,22 @@ data class InvalidDocument(
     val index: Int,
     val documentType: String,
     val errors: NonEmptyList<DocumentError>,
+)
+
+/**
+ * Result of document validation with trust information
+ */
+data class DocumentValidationResult(
+    val documents: List<MDoc>,
+    val trustInfos: List<TrustInfo>,
+)
+
+/**
+ * Private helper class
+ */
+private data class DocumentWithTrust(
+    val document: MDoc,
+    val trustInfo: TrustInfo,
 )
 
 /**
@@ -73,6 +90,39 @@ class DeviceResponseValidator(
         either {
             ensureStatusIsOk(deviceResponse)
             ensureValidDocuments(deviceResponse, documentValidator)
+        }
+
+    /**
+     * Validates the given verifier presentation and collects trust information
+     * This method does not fail due to trust issues - it collects trust info instead
+     */
+    suspend fun ensureValidWithTrustInfo(vp: String): Either<DeviceResponseError, DocumentValidationResult> =
+        either {
+            val deviceResponse = ensureCanBeDecoded(vp)
+            ensureStatusIsOk(deviceResponse)
+
+            val results = deviceResponse.documents.mapIndexed { index, document ->
+                when (val result = documentValidator.ensureValidWithTrustInfo(document)) {
+                    is Either.Right -> {
+                        val (validDoc, trustInfo) = result.value
+                        DocumentWithTrust(validDoc, trustInfo)
+                    }
+                    is Either.Left -> {
+                        val defaultTrust = TrustInfo(
+                            issuerInTrustedList = false,
+                            issuerNotExpired = false,
+                            signatureValid = false,
+                            trustValidationErrors = result.value.map { it.toString() },
+                        )
+                        DocumentWithTrust(document, defaultTrust)
+                    }
+                }
+            }
+
+            DocumentValidationResult(
+                documents = results.map { it.document },
+                trustInfos = results.map { it.trustInfo },
+            )
         }
 }
 

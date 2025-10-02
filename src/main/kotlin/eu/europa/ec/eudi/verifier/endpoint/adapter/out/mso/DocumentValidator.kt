@@ -23,6 +23,7 @@ import com.nimbusds.jose.jwk.ECKey
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cert.ProvideTrustSource
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cert.X5CShouldBe
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cert.X5CValidator
+import eu.europa.ec.eudi.verifier.endpoint.domain.TrustInfo
 import id.walt.mdoc.COSECryptoProviderKeyInfo
 import id.walt.mdoc.SimpleCOSECryptoProvider
 import id.walt.mdoc.doc.MDoc
@@ -75,6 +76,33 @@ class DocumentValidator(
                 { ensureDigestsOfIssuerSignedItems(document, issuerSignedItemsShouldBe) },
                 { ensureValidIssuerSignature(document, issuerChain, x5CShouldBe.caCertificates()) },
             ) { _, _, _, _ -> document }
+        }
+
+    suspend fun ensureValidWithTrustInfo(document: MDoc): Either<NonEmptyList<DocumentError>, Pair<MDoc, TrustInfo>> =
+        either {
+            document.decodeMso()
+
+            val x5CShouldBe = ensureMatchingX5CShouldBe(document, provideTrustSource)
+
+            val issuerChain = ensureTrustedChain(document, x5CShouldBe)
+
+            val validityResult = either { ensureNotExpiredValidityInfo(document, clock, validityInfoShouldBe) }
+            val documentTypeResult = either { ensureMatchingDocumentType(document) }
+            val digestResult = either { ensureDigestsOfIssuerSignedItems(document, issuerSignedItemsShouldBe) }
+            val signatureResult = either { ensureValidIssuerSignature(document, issuerChain, x5CShouldBe.caCertificates()) }
+
+            val trustInfo = buildTrustInfoFromResults(
+                chainValid = true, // ensureTrustedChain succeeded above
+                validityResult = validityResult,
+                signatureResult = signatureResult,
+            )
+
+            zipOrAccumulate(
+                { validityResult.bind() },
+                { documentTypeResult.bind() },
+                { digestResult.bind() },
+                { signatureResult.bind() },
+            ) { _, _, _, _ -> document to trustInfo }
         }
 }
 
@@ -204,3 +232,34 @@ private suspend fun Raise<Nel<DocumentError.NoMatchingX5CShouldBe>>.ensureMatchi
     document: MDoc,
     trustSourceProvider: ProvideTrustSource,
 ): X5CShouldBe = trustSourceProvider(document.docType.value) ?: raise(DocumentError.NoMatchingX5CShouldBe.nel())
+
+private fun buildTrustInfoFromResults(
+    chainValid: Boolean,
+    validityResult: Either<DocumentError, Unit>,
+    signatureResult: Either<DocumentError, Unit>,
+): TrustInfo {
+    val errors = mutableListOf<String>()
+
+    val issuerNotExpired = validityResult.fold(
+        ifLeft = { error ->
+            errors.add("Validity check failed: $error")
+            false
+        },
+        ifRight = { true },
+    )
+
+    val signatureValid = signatureResult.fold(
+        ifLeft = { error ->
+            errors.add("Signature validation failed: $error")
+            false
+        },
+        ifRight = { true },
+    )
+
+    return TrustInfo(
+        issuerInTrustedList = chainValid,
+        issuerNotExpired = issuerNotExpired,
+        signatureValid = signatureValid,
+        trustValidationErrors = errors.toList(),
+    )
+}

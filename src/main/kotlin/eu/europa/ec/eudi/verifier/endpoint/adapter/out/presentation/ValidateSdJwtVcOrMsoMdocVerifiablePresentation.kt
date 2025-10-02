@@ -53,6 +53,23 @@ internal class ValidateSdJwtVcOrMsoMdocVerifiablePresentation(
     private val deviceResponseValidatorFactory: (X5CShouldBe.Trusted?) -> DeviceResponseValidator,
 ) : ValidateVerifiablePresentation {
 
+    companion object {
+        private val trustInfoStore = mutableMapOf<TransactionId, MutableList<TrustInfo>>()
+
+        fun addTrustInfo(transactionId: TransactionId?, trustInfo: List<TrustInfo>) {
+            if (transactionId != null && trustInfo.isNotEmpty()) {
+                trustInfoStore.getOrPut(transactionId) { mutableListOf() }.addAll(trustInfo)
+            }
+        }
+
+        fun getTrustInfo(transactionId: TransactionId): List<TrustInfo> =
+            trustInfoStore[transactionId] ?: emptyList()
+
+        fun clearTrustInfo(transactionId: TransactionId) {
+            trustInfoStore.remove(transactionId)
+        }
+    }
+
     override suspend fun invoke(
         transactionId: TransactionId?,
         verifiablePresentation: VerifiablePresentation,
@@ -77,10 +94,15 @@ internal class ValidateSdJwtVcOrMsoMdocVerifiablePresentation(
             Format.MsoMdoc -> {
                 require(vpFormat is VpFormat.MsoMdoc)
                 val validator = deviceResponseValidatorFactory(issuerChain)
-                validator.validateMsoMdocVerifiablePresentation(
+
+                val (validatedPresentation, trustInfo) = validator.validateMsoMdocVerifiablePresentation(
                     vpFormat,
                     verifiablePresentation,
                 ).bind()
+
+                addTrustInfo(transactionId, trustInfo)
+
+                validatedPresentation
             }
 
             else ->
@@ -136,17 +158,20 @@ internal class ValidateSdJwtVcOrMsoMdocVerifiablePresentation(
     private suspend fun DeviceResponseValidator.validateMsoMdocVerifiablePresentation(
         vpFormat: VpFormat.MsoMdoc,
         verifiablePresentation: VerifiablePresentation,
-    ): Either<WalletResponseValidationError, VerifiablePresentation.Str> = either {
+    ): Either<WalletResponseValidationError, Pair<VerifiablePresentation.Str, List<TrustInfo>>> = either {
         ensure(verifiablePresentation is VerifiablePresentation.Str) {
             WalletResponseValidationError.InvalidVpToken("Mso MDoc VC must be a string.")
         }
 
-        val documents = ensureValid(verifiablePresentation.value)
+        val result = ensureValidWithTrustInfo(verifiablePresentation.value)
             .mapLeft { error ->
                 log.warn("Failed to validate MsoMdoc VC. Reason: '$error'")
                 error.toWalletResponseValidationError()
             }
             .bind()
+
+        val documents = result.documents
+        val trustInfos = result.trustInfos
 
         documents.forEach { document ->
             val issuerAuth = ensureNotNull(document.issuerSigned.issuerAuth) {
@@ -157,7 +182,8 @@ internal class ValidateSdJwtVcOrMsoMdocVerifiablePresentation(
                 WalletResponseValidationError.InvalidVpToken("MSO MDoc is not signed with a supported algorithms")
             }
         }
-        verifiablePresentation
+
+        verifiablePresentation to trustInfos
     }
 }
 

@@ -799,12 +799,14 @@ Description: Password of the Key to use for JAR signing, in the configured Keyst
 
 The verifier supports the configuration of multiple trust sources, that will be used to trust the issuers of presented credentials.  
 Each trust source is associated with a regex pattern, that will be used to match the trust source to an issuer, based on a credential's docType/vct.
-Each trust source can be configured with a List of Trusted Lists, a Keystore or both.
-The trust sources are configured using the environment variable `VERIFIER_TRUSTSOURCES` and are indexed starting from `0`. You can define multiple trust sources by incrementing the index (e.g., VERIFIER_TRUSTSOURCES_0_*, VERIFIER_TRUSTSOURCES_1_*, etc.)
+Each trust source can be configured with a **List of Trusted Lists (LOTL)**, a **Trust List (TL)**, a **Keystore**, or any combination of these.
+The trust sources are configured using the environment variable `VERIFIER_TRUSTSOURCES` and are indexed starting from `0`. You can define multiple trust sources by incrementing the index (e.g., VERIFIER*TRUSTSOURCES_0*_, VERIFIER*TRUSTSOURCES_1*_, etc.)
 
 Variable: `VERIFIER_TRUSTSOURCES_0_PATTERN`
 Description: The regex pattern used to match the trust source to an issuer, based on a credential's docType/vct
 Example: `eu.europa.ec.eudi.pid.*|urn:eu.europa.ec.eudi:pid:.*`
+
+#### List of Trusted Lists (LOTL) Configuration
 
 Variable: `VERIFIER_TRUSTSOURCES_0_LOTL_LOCATION`
 Description: If present, the URL of the List of Trusted Lists from which to load the X509 Certificates for this trust source
@@ -828,16 +830,30 @@ Examples: `jks`, `pkcs12`
 Variable: `VERIFIER_TRUSTSOURCES_0_LOTL_KEYSTORE_PASSWORD`
 Description: If present and non-blank, the password of the Keystore which contains the public key that was used to sign the List of Trusted Lists
 
-Variable: `VERIFIER_TRUSTSOURCES_0_KEYSTORE_PATH`
-Description: If present, the URL of the Keystore from which to load the X509 Certificates for this trust source 
-Examples: `classpath:trusted-issuers.jks`, `file:///trusted-issuers.jks`
+#### Trust List (TL) Configuration
 
-Variable: `VERIFIER_TRUSTSOURCES_0_KEYSTORE_TYPE`
-Description: Type of the Keystore from which to load the X509 Certificates for this trust source
+Variable: `VERIFIER_TRUSTSOURCES_0_TL_LOCATION`
+Description: If present, the URL of the Trust List from which to load the X509 Certificates for this trust source
+Example: `https://example.com/trust-list.xml`
+
+Variable: `VERIFIER_TRUSTSOURCES_0_TL_REFRESHINTERVAL`
+Description: If present, a cron expression with the refresh interval of the Trust List in seconds. If not present, the default value is `0 0 * * * * ` (every hour)
+Example: `0 0 */4 * * *`
+
+Variable: `VERIFIER_TRUSTSOURCES_0_TL_SERVICETYPEFILTER`
+Description: If present, the service type filter to be used when loading the Trust List. If not present, all service types are loaded. Valid values are `PIDProvider`, `QEEAProvider`, `PubEAAProvider` and `PAAProvider`.
+Example: `PAAProvider`
+
+Variable: `VERIFIER_TRUSTSOURCES_0_TL_KEYSTORE_PATH`
+Description: If present, the URL of the Keystore which contains the public key that was used to sign the Trust List
+Examples: `classpath:tl-key.jks`, `file:///tl-key.jks`
+
+Variable: `VERIFIER_TRUSTSOURCES_0_TL_KEYSTORE_TYPE`
+Description: Type of the Keystore which contains the public key that was used to sign the Trust List
 Examples: `jks`, `pkcs12`
 
-Variable: `VERIFIER_TRUSTSOURCES_0_KEYSTORE_PASSWORD`
-Description: If present and non-blank, the password of the Keystore from which to load the X509 Certificates for this trust source
+Variable: `VERIFIER_TRUSTSOURCES_0_TL_KEYSTORE_PASSWORD`
+Description: If present and non-blank, the password of the Keystore which contains the public key that was used to sign the Trust List
 
 ### Proxy configuration  
 

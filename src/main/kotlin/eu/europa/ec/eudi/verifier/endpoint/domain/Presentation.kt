@@ -202,11 +202,13 @@ sealed interface WalletResponse {
 
     data class VpToken(
         val vpContent: VpContent,
+        val trustInfo: List<TrustInfo>? = null,
     ) : WalletResponse
 
     data class IdAndVpToken(
         val idToken: Jwt,
         val vpContent: VpContent,
+        val trustInfo: List<TrustInfo>? = null,
     ) : WalletResponse {
         init {
             require(idToken.isNotEmpty())

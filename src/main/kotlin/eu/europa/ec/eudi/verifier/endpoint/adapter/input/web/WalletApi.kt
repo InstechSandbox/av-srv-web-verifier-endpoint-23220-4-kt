@@ -21,6 +21,7 @@ import com.nimbusds.jose.jwk.JWK
 import com.nimbusds.jose.jwk.JWKSet
 import eu.europa.ec.eudi.prex.PresentationDefinition
 import eu.europa.ec.eudi.prex.PresentationExchange
+import eu.europa.ec.eudi.verifier.endpoint.adapter.input.web.form.AuthorisationResponseMapper
 import eu.europa.ec.eudi.verifier.endpoint.domain.*
 import eu.europa.ec.eudi.verifier.endpoint.port.input.*
 import eu.europa.ec.eudi.verifier.endpoint.port.input.QueryResponse.*
@@ -46,6 +47,7 @@ class WalletApi(
     private val getPresentationDefinition: GetPresentationDefinition,
     private val postWalletResponse: PostWalletResponse,
     private val signingKey: JWK,
+    private val authorisationResponseMapper: AuthorisationResponseMapper,
 ) {
 
     private val logger: Logger = LoggerFactory.getLogger(WalletApi::class.java)
@@ -131,7 +133,7 @@ class WalletApi(
     private suspend fun handlePostWalletResponse(req: ServerRequest): ServerResponse = try {
         logger.info("Handling PostWalletResponse ...")
         val requestId = req.requestId()
-        val walletResponse = req.awaitFormData().walletResponse()
+        val walletResponse = authorisationResponseMapper.mapFromFormData(req.awaitFormData())
         postWalletResponse(requestId, walletResponse).fold(
             ifRight = { response ->
                 logger.info("PostWalletResponse processed")
@@ -194,10 +196,31 @@ class WalletApi(
                         Json.decodeFromString<JsonElement>(this)
                     }.getOrElse { JsonPrimitive(this) }
 
+                fun extractVpToken(): JsonElement? {
+                    getFirst("vp_token")?.let { vpTokenValue ->
+                        return vpTokenValue.toJsonElement()
+                    }
+                    val vpTokenKeys = keys.filter { it.startsWith("vp_token[") && it.endsWith("]") }
+                    if (vpTokenKeys.isNotEmpty()) {
+                        val vpTokenObject = buildJsonObject {
+                            vpTokenKeys.forEach { fullKey ->
+                                val innerKey = fullKey.substringAfter("vp_token[").substringBefore("]")
+                                val value = getFirst(fullKey)
+                                if (value != null) {
+                                    put(innerKey, JsonPrimitive(value))
+                                }
+                            }
+                        }
+                        return vpTokenObject
+                    }
+
+                    return null
+                }
+
                 return AuthorisationResponseTO(
                     state = getFirst("state"),
                     idToken = getFirst("id_token"),
-                    vpToken = getFirst("vp_token")?.toJsonElement(),
+                    vpToken = extractVpToken(),
                     presentationSubmission = getFirst("presentation_submission")?.let {
                         PresentationExchange.jsonParser.decodePresentationSubmission(it).getOrThrow()
                     },

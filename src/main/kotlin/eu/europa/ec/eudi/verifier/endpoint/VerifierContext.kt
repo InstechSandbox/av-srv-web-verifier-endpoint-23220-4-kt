@@ -53,11 +53,13 @@ import eu.europa.ec.eudi.verifier.endpoint.adapter.out.sdjwtvc.LookupTypeMetadat
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.sdjwtvc.SdJwtVcValidator
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.sdjwtvc.StatusListTokenValidator
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.sdjwtvc.ValidateJsonSchema
+import eu.europa.ec.eudi.verifier.endpoint.adapter.out.tl.FetchTLCertificatesDSS
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.x509.ParsePemEncodedX509CertificateChainWithNimbus
 import eu.europa.ec.eudi.verifier.endpoint.domain.*
 import eu.europa.ec.eudi.verifier.endpoint.port.input.*
 import eu.europa.ec.eudi.verifier.endpoint.port.out.cfg.CreateQueryWalletResponseRedirectUri
 import eu.europa.ec.eudi.verifier.endpoint.port.out.cfg.GenerateResponseCode
+import eu.europa.ec.eudi.verifier.endpoint.port.out.tl.FetchTLCertificates
 import io.ktor.client.*
 import io.ktor.client.engine.*
 import io.ktor.client.engine.apache.*
@@ -337,7 +339,9 @@ internal fun beans(clock: Clock) = beans {
     //
     bean(::ScheduleTimeoutPresentations)
     bean(::ScheduleDeleteOldPresentations)
-    bean { RefreshTrustSources(ref(), ref(), ref()) }
+    bean { RefreshTrustSources(ref(), ref(), ref(), ref()) }
+
+    bean<FetchTLCertificates> { FetchTLCertificatesDSS() }
 
     //
     // Config
@@ -354,6 +358,7 @@ internal fun beans(clock: Clock) = beans {
             ref(),
             ref(),
             ref<VerifierConfig>().verifierId.jarSigning.key,
+            ref(),
         )
         val verifierApi = VerifierApi(ref(), ref(), ref(), ref())
         val staticContent = StaticContent()
@@ -607,14 +612,30 @@ private fun Environment.trustSources(): Map<Regex, TrustSourceConfig>? {
             val refreshInterval = getPropertyOrEnvVariable("$indexPrefix.lotl.refreshInterval", "0 0 * * * *")
 
             val lotlKeystoreConfig = parseKeyStoreConfig("$indexPrefix.lotl.keystore")
+            val validationType = getPropertyOrEnvVariable<ValidationType>("$indexPrefix.lotl.validation.type")
+                ?: ValidationType.PKIX
 
-            TrustedListConfig(location, serviceTypeFilter, refreshInterval, lotlKeystoreConfig)
+            TrustedListConfig(location, serviceTypeFilter, refreshInterval, lotlKeystoreConfig, TrustedListType.LOTL, validationType)
+        }
+
+        // Parse TL configuration if present
+        val tlSourceConfig = getPropertyOrEnvVariable("$indexPrefix.tl.location")?.takeIf { it.isNotBlank() }?.let { tlLocation ->
+            val location = URI(tlLocation).toURL()
+            val serviceTypeFilter = getPropertyOrEnvVariable<ProviderKind>("$indexPrefix.tl.serviceTypeFilter")
+            val refreshInterval = getPropertyOrEnvVariable("$indexPrefix.tl.refreshInterval", "0 0 * * * *")
+            val tlKeystoreConfig = parseKeyStoreConfig("$indexPrefix.tl.keystore")
+            val validationType = getPropertyOrEnvVariable<ValidationType>("$indexPrefix.tl.validation.type")
+                ?: ValidationType.PKIX
+
+            TrustedListConfig(location, serviceTypeFilter, refreshInterval, tlKeystoreConfig, TrustedListType.TL, validationType)
         }
 
         // Parse keystore configuration if present
         val keystoreConfig = parseKeyStoreConfig("$indexPrefix.keystore")
 
-        trustSourcesConfigMap[pattern] = TrustSourcesConfig(lotlSourceConfig, keystoreConfig)
+        val trustedListConfig = tlSourceConfig ?: lotlSourceConfig
+
+        trustSourcesConfigMap[pattern] = TrustSourcesConfig(trustedListConfig, keystoreConfig)
 
         index++
     }

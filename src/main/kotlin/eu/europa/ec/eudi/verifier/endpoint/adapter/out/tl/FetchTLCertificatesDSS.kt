@@ -13,18 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package eu.europa.ec.eudi.verifier.endpoint.adapter.out.lotl
+package eu.europa.ec.eudi.verifier.endpoint.adapter.out.tl
 
 import arrow.core.Either
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.utils.DSSValidationSupport
 import eu.europa.ec.eudi.verifier.endpoint.domain.TrustedListConfig
-import eu.europa.ec.eudi.verifier.endpoint.port.out.lotl.FetchLOTLCertificates
-import eu.europa.esig.dss.spi.client.http.DSSCacheFileLoader
+import eu.europa.ec.eudi.verifier.endpoint.port.out.tl.FetchTLCertificates
 import eu.europa.esig.dss.spi.tsl.TrustedListsCertificateSource
 import eu.europa.esig.dss.tsl.cache.CacheCleaner
-import eu.europa.esig.dss.tsl.function.GrantedOrRecognizedAtNationalLevelTrustAnchorPeriodPredicate
 import eu.europa.esig.dss.tsl.job.TLValidationJob
-import eu.europa.esig.dss.tsl.source.LOTLSource
+import eu.europa.esig.dss.tsl.source.TLSource
 import eu.europa.esig.dss.tsl.sync.ExpirationAndSignatureCheckStrategy
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -34,14 +32,13 @@ import org.springframework.beans.factory.DisposableBean
 import java.security.cert.X509Certificate
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.function.Predicate
 import kotlin.time.measureTimedValue
 
-private val logger: Logger = LoggerFactory.getLogger(FetchLOTLCertificatesDSS::class.java)
+private val logger: Logger = LoggerFactory.getLogger(FetchTLCertificatesDSS::class.java)
 
-class FetchLOTLCertificatesDSS(
-    private val executorService: ExecutorService = Executors.newFixedThreadPool(4),
-) : FetchLOTLCertificates, DisposableBean {
+class FetchTLCertificatesDSS(
+    private val executorService: ExecutorService = Executors.newFixedThreadPool(2),
+) : FetchTLCertificates, DisposableBean {
     private val dispatcher = executorService.asCoroutineDispatcher()
 
     override fun destroy() {
@@ -53,11 +50,10 @@ class FetchLOTLCertificatesDSS(
     ): Either<Throwable, List<X509Certificate>> = Either.catch {
         val trustedListsCertificateSource = TrustedListsCertificateSource()
 
-        val tlCacheDirectory = DSSValidationSupport.createCacheDirectory("lotl-cache")
+        val tlCacheDirectory = DSSValidationSupport.createCacheDirectory("tl-cache")
 
-        val offlineLoader: DSSCacheFileLoader = DSSValidationSupport.createOfflineLoader(tlCacheDirectory)
-
-        val onlineLoader: DSSCacheFileLoader = DSSValidationSupport.createOnlineLoader(tlCacheDirectory)
+        val offlineLoader = DSSValidationSupport.createOfflineLoader(tlCacheDirectory)
+        val onlineLoader = DSSValidationSupport.createOnlineLoader(tlCacheDirectory)
 
         val cacheCleaner = CacheCleaner().apply {
             setCleanMemory(true)
@@ -66,7 +62,7 @@ class FetchLOTLCertificatesDSS(
         }
 
         val validationJob = TLValidationJob().apply {
-            setListOfTrustedListSources(lotlSource(trustedListConfig))
+            setTrustedListSources(tlSource(trustedListConfig))
             setOfflineDataLoader(offlineLoader)
             setOnlineDataLoader(onlineLoader)
             setTrustedListCertificateSource(trustedListsCertificateSource)
@@ -75,33 +71,38 @@ class FetchLOTLCertificatesDSS(
             setExecutorService(executorService)
         }
 
-        logger.info("Starting validation job")
+        logger.info("Starting TL validation job for: ${trustedListConfig.location}")
         val (certs, duration) = measureTimedValue {
             withContext(dispatcher) {
                 validationJob.onlineRefresh()
             }
-
-            trustedListsCertificateSource.certificates.map {
-                it.certificate
-            }
+            trustedListsCertificateSource.certificates.map { it.certificate }
         }
-        logger.info("Finished validation job in $duration")
+        logger.info("Finished TL validation job in $duration, found ${certs.size} certificates")
+
+        certs.forEachIndexed { index, cert -> // TODO delete later
+            logger.info("Certificate ${index + 1}:")
+            logger.info("  Subject: ${cert.subjectDN}")
+            logger.info("  Issuer: ${cert.issuerDN}")
+            logger.info("  Serial Number: ${cert.serialNumber}")
+            logger.info("  Valid From: ${cert.notBefore}")
+            logger.info("  Valid Until: ${cert.notAfter}")
+            logger.info("  ---")
+        }
+
         certs
     }
 
-    private suspend fun lotlSource(
+    private suspend fun tlSource(
         trustedListConfig: TrustedListConfig,
-    ): LOTLSource = LOTLSource().apply {
+    ): TLSource = TLSource().apply {
         url = trustedListConfig.location.toExternalForm()
         trustedListConfig.keystoreConfig
-            ?.let { DSSValidationSupport.loadKeyStoreCertificateSource(it, dispatcher, "LotlCertificateSource").getOrNull() }
+            ?.let { DSSValidationSupport.loadKeyStoreCertificateSource(it, dispatcher, "TlCertificateSource").getOrNull() }
             ?.let { certificateSource = it }
-        isPivotSupport = true
-        trustAnchorValidityPredicate = GrantedOrRecognizedAtNationalLevelTrustAnchorPeriodPredicate()
-        tlVersions = listOf(5, 6)
-        trustedListConfig.serviceTypeFilter?.let {
-            trustServicePredicate = Predicate { tspServiceType ->
-                tspServiceType.serviceInformation.serviceTypeIdentifier == it.value
+        trustedListConfig.serviceTypeFilter?.let { filter ->
+            trustServicePredicate = java.util.function.Predicate { tspServiceType ->
+                tspServiceType.serviceInformation.serviceTypeIdentifier == filter.value
             }
         }
     }

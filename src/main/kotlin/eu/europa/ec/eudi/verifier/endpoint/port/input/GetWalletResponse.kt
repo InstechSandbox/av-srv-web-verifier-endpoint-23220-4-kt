@@ -16,6 +16,7 @@
 package eu.europa.ec.eudi.verifier.endpoint.port.input
 
 import eu.europa.ec.eudi.prex.PresentationSubmission
+import eu.europa.ec.eudi.verifier.endpoint.adapter.out.presentation.ValidateSdJwtVcOrMsoMdocVerifiablePresentation
 import eu.europa.ec.eudi.verifier.endpoint.domain.*
 import eu.europa.ec.eudi.verifier.endpoint.port.input.QueryResponse.*
 import eu.europa.ec.eudi.verifier.endpoint.port.out.persistence.LoadPresentationById
@@ -40,6 +41,24 @@ data class WalletResponseTO(
     @SerialName("presentation_submission") val presentationSubmission: PresentationSubmission? = null,
     @SerialName("error") val error: String? = null,
     @SerialName("error_description") val errorDescription: String? = null,
+    @SerialName("trust_info") val trustInfo: List<TrustInfoTO>? = null,
+)
+
+@Serializable
+data class TrustInfoTO(
+    @SerialName("issuer_in_trusted_list") val issuerInTrustedList: Boolean,
+    @SerialName("issuer_not_expired") val issuerNotExpired: Boolean,
+    @SerialName("signature_valid") val signatureValid: Boolean,
+    @SerialName("validation_errors") val validationErrors: List<String>,
+    @SerialName("is_fully_trusted") val isFullyTrusted: Boolean,
+)
+
+internal fun TrustInfo.toTO(): TrustInfoTO = TrustInfoTO(
+    issuerInTrustedList = issuerInTrustedList,
+    issuerNotExpired = issuerNotExpired,
+    signatureValid = signatureValid,
+    validationErrors = trustValidationErrors,
+    isFullyTrusted = isFullyTrusted,
 )
 
 internal fun WalletResponse.toTO(): WalletResponseTO {
@@ -70,12 +89,14 @@ internal fun WalletResponse.toTO(): WalletResponseTO {
         is WalletResponse.VpToken -> WalletResponseTO(
             vpToken = vpContent.toJsonElement(),
             presentationSubmission = vpContent.presentationSubmissionOrNull(),
+            trustInfo = trustInfo?.map { it.toTO() },
         )
 
         is WalletResponse.IdAndVpToken -> WalletResponseTO(
             idToken = idToken,
             vpToken = vpContent.toJsonElement(),
             presentationSubmission = vpContent.presentationSubmissionOrNull(),
+            trustInfo = trustInfo?.map { it.toTO() },
         )
 
         is WalletResponse.Error -> WalletResponseTO(
@@ -118,8 +139,18 @@ class GetWalletResponseLive(
 
     private suspend fun found(presentation: Presentation.Submitted): Found<WalletResponseTO> {
         val walletResponse = presentation.walletResponse.toTO()
-        logVerifierGotWalletResponse(presentation, walletResponse)
-        return Found(walletResponse)
+
+        val trustInfo = ValidateSdJwtVcOrMsoMdocVerifiablePresentation.getTrustInfo(presentation.id)
+        val enhancedWalletResponse = if (trustInfo.isNotEmpty()) {
+            walletResponse.copy(trustInfo = trustInfo.map { it.toTO() })
+        } else {
+            walletResponse
+        }
+
+        ValidateSdJwtVcOrMsoMdocVerifiablePresentation.clearTrustInfo(presentation.id)
+
+        logVerifierGotWalletResponse(presentation, enhancedWalletResponse)
+        return Found(enhancedWalletResponse)
     }
 
     private suspend fun responseCodeMismatch(

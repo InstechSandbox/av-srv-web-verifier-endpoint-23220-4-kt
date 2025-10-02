@@ -21,9 +21,20 @@ import eu.europa.ec.eudi.verifier.endpoint.adapter.out.utils.getOrThrow
 import eu.europa.ec.eudi.verifier.endpoint.domain.KeyStoreConfig
 import eu.europa.ec.eudi.verifier.endpoint.domain.TrustSourceConfig
 import eu.europa.ec.eudi.verifier.endpoint.domain.TrustedListConfig
+import eu.europa.ec.eudi.verifier.endpoint.domain.TrustedListType
+import eu.europa.ec.eudi.verifier.endpoint.domain.ValidationType
 import eu.europa.ec.eudi.verifier.endpoint.domain.VerifierConfig
 import eu.europa.ec.eudi.verifier.endpoint.port.out.lotl.FetchLOTLCertificates
-import kotlinx.coroutines.*
+import eu.europa.ec.eudi.verifier.endpoint.port.out.tl.FetchTLCertificates
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.springframework.beans.factory.InitializingBean
 import org.springframework.scheduling.annotation.EnableScheduling
 import org.springframework.scheduling.annotation.SchedulingConfigurer
@@ -34,24 +45,25 @@ import java.security.cert.X509Certificate
 @EnableScheduling
 class RefreshTrustSources(
     private val fetchLOTLCertificates: FetchLOTLCertificates,
+    private val fetchTLCertificates: FetchTLCertificates,
     private var trustSources: TrustSources,
     private val verifierConfig: VerifierConfig,
 ) : InitializingBean, SchedulingConfigurer {
     private val ioDispatcher = Dispatchers.IO.limitedParallelism(2)
 
     override fun afterPropertiesSet() {
-        runBlocking { updateLOTLs() }
+        runBlocking { updateAllTrustSources() }
     }
 
     override fun configureTasks(taskRegistrar: ScheduledTaskRegistrar) {
-        // Configure LOTL refresh tasks for each trust source that has LOTL configuration
+        // Configure refresh tasks for each trust source configuration
         verifierConfig.trustSourcesConfig?.forEach { (regex, trustSourceConfig) ->
             trustSourceConfig.leftOrNull()?.let {
                 taskRegistrar.addCronTask(
                     CronTask(
                         {
                             CoroutineScope(ioDispatcher + CoroutineName("$regex")).launch {
-                                updateLotl(regex, trustSourceConfig)
+                                updateTrustSource(regex, trustSourceConfig)
                             }
                         },
                         it.refreshInterval,
@@ -61,42 +73,64 @@ class RefreshTrustSources(
         }
     }
 
-    private suspend fun updateLOTLs() =
+    private suspend fun updateAllTrustSources() =
         withContext(ioDispatcher + CoroutineName("initializing LOTL(s)")) {
             when (verifierConfig.trustSourcesConfig) {
                 null -> trustSources.ignoreAll()
                 else ->
                     verifierConfig.trustSourcesConfig
                         .map { (regex, trustSourceConfig) ->
-                            launch { updateLotl(regex, trustSourceConfig) }
+                            launch { updateTrustSource(regex, trustSourceConfig) }
                         }.joinAll()
             }
         }
 
-    private suspend fun updateLotl(regex: Regex, trustSourceConfig: TrustSourceConfig) {
-        val certs = trustSourceConfig.fetchCerts()
-        trustSources.updateWithX5CShouldBe(regex, certs)
+    private suspend fun updateTrustSource(regex: Regex, trustSourceConfig: TrustSourceConfig) {
+        val trustedListConfig = trustSourceConfig.leftOrNull() ?: return
+
+        try {
+            val certs = trustSourceConfig.fetchCerts()
+            if (trustedListConfig.validationType == ValidationType.DS) {
+                trustSources.updateWithDirectlyTrustedDSCertificates(regex, certs)
+            } else {
+                trustSources.updateWithX5CShouldBe(regex, certs)
+            }
+        } catch (e: Exception) {
+            // TODO: log error
+            throw e
+        }
     }
 
-    private suspend fun TrustSourceConfig.fetchCerts(): List<X509Certificate> =
-        coroutineScope {
-            suspend fun TrustedListConfig.lotlCerts(): List<X509Certificate> =
-                fetchLOTLCertificates(this).getOrThrow()
-
-            suspend fun KeyStoreConfig.keyCerts(): List<X509Certificate> =
-                withContext(ioDispatcher) {
-                    val x5CShouldBe = X5CShouldBe.fromKeystore(keystore)
-                    x5CShouldBe.caCertificates()
+    private suspend fun TrustSourceConfig.fetchCerts(): List<X509Certificate> = coroutineScope {
+        suspend fun TrustedListConfig.smartFetch(): List<X509Certificate> {
+            return when (this.type) {
+                TrustedListType.TL -> {
+                    fetchTLCertificates(this).getOrThrow()
                 }
-
-            fold(
-                fa = { trustedList -> trustedList.lotlCerts() },
-                fb = { keyStore -> keyStore.keyCerts() },
-                fab = { trustedList, keyStore ->
-                    val lotlCerts = async { trustedList.lotlCerts() }
-                    val ksCerts = async { keyStore.keyCerts() }
-                    ksCerts.await() + lotlCerts.await()
-                },
-            )
+                TrustedListType.LOTL -> {
+                    fetchLOTLCertificates(this).getOrThrow()
+                }
+            }
         }
+
+        suspend fun KeyStoreConfig.keyCerts(): List<X509Certificate> =
+            withContext(ioDispatcher) {
+                val x5CShouldBe = X5CShouldBe.fromKeystore(keystore)
+                x5CShouldBe.caCertificates()
+            }
+
+        fold(
+            fa = { trustedList ->
+                trustedList.smartFetch()
+            },
+            fb = { keyStore ->
+                keyStore.keyCerts()
+            },
+            fab = { trustedList, keyStore ->
+                val lotlOrTlCerts = async { trustedList.smartFetch() }
+                val ksCerts = async { keyStore.keyCerts() }
+                ksCerts.await() + lotlOrTlCerts.await()
+            },
+        )
+    }
 }

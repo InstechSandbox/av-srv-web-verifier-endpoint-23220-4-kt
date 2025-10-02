@@ -43,6 +43,14 @@ sealed interface X5CShouldBe {
     ) : X5CShouldBe
 
     /**
+     * Direct validation against DS certificates
+     * The signing certificate must directly match one of the trusted DS certificates
+     */
+    data class DirectlyTrusted(
+        val trustedDSCertificates: NonEmptyList<X509Certificate>,
+    ) : X5CShouldBe
+
+    /**
      * The chain will not be checked
      */
     data object Ignored : X5CShouldBe
@@ -51,6 +59,7 @@ sealed interface X5CShouldBe {
         when (this) {
             Ignored -> emptyList()
             is Trusted -> rootCACertificates
+            is DirectlyTrusted -> trustedDSCertificates
         }
 
     companion object {
@@ -61,6 +70,12 @@ sealed interface X5CShouldBe {
             when (val nel = rootCACertificates.toNonEmptyListOrNull()) {
                 null -> Ignored
                 else -> Trusted(nel, customizePKIX)
+            }
+
+        fun directlyTrusted(dsCertificates: List<X509Certificate>): X5CShouldBe =
+            when (val nel = dsCertificates.toNonEmptyListOrNull()) {
+                null -> Ignored
+                else -> DirectlyTrusted(nel)
             }
 
         fun fromKeystore(
@@ -100,14 +115,17 @@ class X5CValidator(private val x5CShouldBe: X5CShouldBe) {
         when (x5CShouldBe) {
             X5CShouldBe.Ignored -> Unit // Do nothing
             is X5CShouldBe.Trusted -> {
-                trustedOrThrow(chain, x5CShouldBe)
+                trustedOrThrowPKIX(chain, x5CShouldBe)
+            }
+            is X5CShouldBe.DirectlyTrusted -> {
+                trustedOrThrowDirect(chain, x5CShouldBe)
             }
         }
     }
 }
 
 @Throws(CertPathValidatorException::class)
-private fun trustedOrThrow(
+private fun trustedOrThrowPKIX(
     chain: Nel<X509Certificate>,
     trusted: X5CShouldBe.Trusted,
 ) {
@@ -118,6 +136,28 @@ private fun trustedOrThrow(
     val validator = CertPathValidator.getInstance("PKIX")
 
     validator.validate(certPath, pkixParameters)
+}
+
+/**
+ * Direct validation for DS certificates from Trusted Lists
+ * The signing certificate (head of chain) must directly match one of the trusted DS certificates
+ */
+@Throws(CertPathValidatorException::class)
+private fun trustedOrThrowDirect(
+    chain: Nel<X509Certificate>,
+    trusted: X5CShouldBe.DirectlyTrusted,
+) {
+    val signingCert = chain.head
+
+    val isTrusted = trusted.trustedDSCertificates.any { trustedCert ->
+        signingCert == trustedCert
+    }
+
+    if (!isTrusted) {
+        throw CertPathValidatorException(
+            "Signing certificate does not match any of the trusted DS certificates from the Trusted List",
+        )
+    }
 }
 
 private fun X5CShouldBe.Trusted.asPkixParameters(): PKIXParameters {

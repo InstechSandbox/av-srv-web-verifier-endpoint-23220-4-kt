@@ -58,6 +58,19 @@ class TrustSources(
         }
     }
 
+    /**
+     * Updates trust sources with DS certificates for direct validation (AV attestations)
+     */
+    suspend fun updateWithDirectlyTrustedDSCertificates(pattern: Regex, dsCerts: List<X509Certificate>) {
+        mutex.withLock {
+            val x5CShouldBe = X5CShouldBe.directlyTrusted(dsCerts)
+            x5CShouldBeMap[pattern] = x5CShouldBe
+            logger.info(
+                "TrustSources updated for pattern $pattern with ${x5CShouldBe.caCertificates().size} directly trusted DS certificates",
+            )
+        }
+    }
+
     suspend fun ignoreAll() {
         mutex.withLock {
             x5CShouldBeMap[Regex(".*")] = X5CShouldBe.Ignored
