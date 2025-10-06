@@ -41,6 +41,7 @@ import org.springframework.context.annotation.Primary
 import org.springframework.context.support.GenericApplicationContext
 import org.springframework.core.annotation.AliasFor
 import org.springframework.core.io.ClassPathResource
+import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.ContextConfiguration
 import java.security.KeyStore
 import java.time.Clock
@@ -115,6 +116,7 @@ object TestContext {
     classes = [VerifierApplication::class],
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
 )
+@ActiveProfiles("test")
 @ContextConfiguration(initializers = [BeansDslApplicationContextInitializer::class])
 internal annotation class VerifierApplicationTest(
 

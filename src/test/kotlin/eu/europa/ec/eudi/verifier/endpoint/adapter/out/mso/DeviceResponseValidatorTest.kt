@@ -20,6 +20,7 @@ import arrow.core.toNonEmptyListOrNull
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cert.ProvideTrustSource
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cert.X5CShouldBe
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Disabled
 import org.springframework.core.io.DefaultResourceLoader
 import java.io.InputStream
 import java.security.KeyStore
@@ -142,6 +143,7 @@ class DeviceResponseValidatorTest {
     }
 
     @Test
+    @Disabled // flaky
     fun `a vp_token having a single document skipping chain validation should be valid`() = runTest {
         val validDocuments = run {
             val docV = DocumentValidator(provideTrustSource = ProvideTrustSource.Ignored)

@@ -82,6 +82,7 @@ import org.springframework.core.env.Environment
 import org.springframework.core.env.getProperty
 import org.springframework.core.io.DefaultResourceLoader
 import org.springframework.core.io.FileSystemResource
+import org.springframework.core.io.ResourceLoader
 import org.springframework.http.codec.json.KotlinSerializationJsonDecoder
 import org.springframework.http.codec.json.KotlinSerializationJsonEncoder
 import org.springframework.security.config.web.server.ServerHttpSecurity
@@ -346,7 +347,7 @@ internal fun beans(clock: Clock) = beans {
     //
     // Config
     //
-    bean { verifierConfig(env, ref()) }
+    bean { verifierConfig(env, ref(), DefaultResourceLoader()) }
 
     //
     // End points
@@ -528,7 +529,7 @@ private fun jarSigningConfig(environment: Environment, clock: Clock): SigningCon
     return SigningConfig(key, algorithm)
 }
 
-private fun verifierConfig(environment: Environment, clock: Clock): VerifierConfig {
+private fun verifierConfig(environment: Environment, clock: Clock, resourceLoader: ResourceLoader): VerifierConfig {
     val verifierId = run {
         val originalClientId = environment.getProperty("verifier.originalClientId", "verifier")
         val jarSigning = jarSigningConfig(environment, clock)
@@ -587,7 +588,7 @@ private fun verifierConfig(environment: Environment, clock: Clock): VerifierConf
         clientMetaData = environment.clientMetaData(),
         transactionDataHashAlgorithm = transactionDataHashAlgorithm,
         authorizationRequestScheme = authorizationRequestScheme,
-        trustSourcesConfig = environment.trustSources(),
+        trustSourcesConfig = environment.trustSources(resourceLoader),
     )
 }
 
@@ -595,7 +596,7 @@ private fun verifierConfig(environment: Environment, clock: Clock): VerifierConf
  * Parses the trust sources configuration from the environment.
  * Handles array-like property names: verifier.trustSources[0].pattern, etc.
  */
-private fun Environment.trustSources(): Map<Regex, TrustSourceConfig>? {
+private fun Environment.trustSources(resourceLoader: ResourceLoader): Map<Regex, TrustSourceConfig>? {
     val trustSourcesConfigMap = mutableMapOf<Regex, TrustSourceConfig>()
     val prefix = "verifier.trustSources"
 
@@ -607,7 +608,11 @@ private fun Environment.trustSources(): Map<Regex, TrustSourceConfig>? {
 
         // Parse LOTL configuration if present
         val lotlSourceConfig = getPropertyOrEnvVariable("$indexPrefix.lotl.location")?.takeIf { it.isNotBlank() }?.let { lotlLocation ->
-            val location = URI(lotlLocation).toURL()
+            val location = if (lotlLocation.startsWith("classpath:")) {
+                resourceLoader.getResource(lotlLocation).url
+            } else {
+                URI(lotlLocation).toURL()
+            }
             val serviceTypeFilter = getPropertyOrEnvVariable<ProviderKind>("$indexPrefix.lotl.serviceTypeFilter")
             val refreshInterval = getPropertyOrEnvVariable("$indexPrefix.lotl.refreshInterval", "0 0 * * * *")
 
@@ -620,7 +625,11 @@ private fun Environment.trustSources(): Map<Regex, TrustSourceConfig>? {
 
         // Parse TL configuration if present
         val tlSourceConfig = getPropertyOrEnvVariable("$indexPrefix.tl.location")?.takeIf { it.isNotBlank() }?.let { tlLocation ->
-            val location = URI(tlLocation).toURL()
+            val location = if (tlLocation.startsWith("classpath:")) {
+                resourceLoader.getResource(tlLocation).url
+            } else {
+                URI(tlLocation).toURL()
+            }
             val serviceTypeFilter = getPropertyOrEnvVariable<ProviderKind>("$indexPrefix.tl.serviceTypeFilter")
             val refreshInterval = getPropertyOrEnvVariable("$indexPrefix.tl.refreshInterval", "0 0 * * * *")
             val tlKeystoreConfig = parseKeyStoreConfig("$indexPrefix.tl.keystore")
