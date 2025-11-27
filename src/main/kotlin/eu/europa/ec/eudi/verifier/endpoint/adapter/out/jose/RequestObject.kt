@@ -15,7 +15,6 @@
  */
 package eu.europa.ec.eudi.verifier.endpoint.adapter.out.jose
 
-import eu.europa.ec.eudi.prex.PresentationDefinition
 import eu.europa.ec.eudi.verifier.endpoint.domain.*
 import java.net.URL
 import java.time.Clock
@@ -24,11 +23,8 @@ import java.time.Instant
 internal data class RequestObject(
     val verifierId: VerifierId,
     val responseType: List<String>,
-    val presentationDefinitionUri: URL?,
-    val presentationDefinition: PresentationDefinition? = null,
     val dcqlQuery: DCQL? = null,
     val scope: List<String>,
-    val idTokenType: List<String>,
     val nonce: String,
     val responseMode: String,
     val responseUri: URL?,
@@ -43,63 +39,23 @@ internal fun requestObjectFromDomain(
     clock: Clock,
     presentation: Presentation.Requested,
 ): RequestObject {
-    val type = presentation.type
-    val scope = when (type) {
-        is PresentationType.IdTokenRequest -> listOf("openid")
-        is PresentationType.VpTokenRequest -> emptyList()
-        is PresentationType.IdAndVpToken -> listOf("openid")
-    }
-    val idTokenType = when (type) {
-        is PresentationType.IdTokenRequest -> type.idTokenType
-        is PresentationType.VpTokenRequest -> emptyList()
-        is PresentationType.IdAndVpToken -> type.idTokenType
-    }.map {
-        when (it) {
-            IdTokenType.AttesterSigned -> "attester_signed_id_token"
-            IdTokenType.SubjectSigned -> "subject_signed_id_token"
-        }
-    }
-    val maybePresentationDefinition = type.presentationDefinitionOrNull
-    val presentationDefinitionUri = maybePresentationDefinition?.let {
-        when (val option = presentation.presentationDefinitionMode) {
-            is EmbedOption.ByValue -> null
-            is EmbedOption.ByReference -> option.buildUrl(presentation.requestId)
-        }
-    }
-    val presentationDefinition = maybePresentationDefinition?.let { presentationDefinition ->
-        when (presentation.presentationDefinitionMode) {
-            is EmbedOption.ByValue -> presentationDefinition
-            is EmbedOption.ByReference -> null
-        }
-    }
-    val responseType = when (type) {
-        is PresentationType.IdTokenRequest -> listOf("id_token")
-        is PresentationType.VpTokenRequest -> listOf("vp_token")
-        is PresentationType.IdAndVpToken -> listOf("vp_token", "id_token")
-    }
-
-    val aud = when (type) {
-        is PresentationType.IdTokenRequest -> emptyList()
-        else -> listOf("https://self-issued.me/v2")
-    }
-
-    val transactionData = type.transactionDataOrNull?.map { it.base64Url }
+    val scope = emptyList<String>()
+    val responseType = listOf(OpenId4VPSpec.VP_TOKEN)
+    val aud = listOf("https://self-issued.me/v2")
+    val transactionData = presentation.transactionData?.map { it.base64Url }
 
     return RequestObject(
         verifierId = verifierConfig.verifierId,
         scope = scope,
-        idTokenType = idTokenType,
-        presentationDefinitionUri = presentationDefinitionUri,
-        presentationDefinition = presentationDefinition,
-        dcqlQuery = type.dcqlQueryOrNull,
+        dcqlQuery = presentation.query,
         responseType = responseType,
         aud = aud,
         nonce = presentation.nonce.value,
         state = presentation.requestId.value,
         responseMode = when (presentation.responseMode) {
-            ResponseModeOption.DirectPost -> "direct_post"
-            ResponseModeOption.DirectPostJwt -> "direct_post.jwt"
-        }, // or direct_post for direct submission
+            ResponseMode.DirectPost -> OpenId4VPSpec.RESPONSE_MODE_DIRECT_POST
+            is ResponseMode.DirectPostJwt -> OpenId4VPSpec.RESPONSE_MODE_DIRECT_POST_JWT
+        },
         responseUri = verifierConfig.responseUriBuilder(presentation.requestId),
         issuedAt = clock.instant(),
         transactionData = transactionData,

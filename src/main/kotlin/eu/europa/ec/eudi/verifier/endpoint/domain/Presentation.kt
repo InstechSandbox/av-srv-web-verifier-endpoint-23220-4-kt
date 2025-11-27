@@ -17,8 +17,6 @@ package eu.europa.ec.eudi.verifier.endpoint.domain
 
 import arrow.core.Either
 import arrow.core.NonEmptyList
-import eu.europa.ec.eudi.prex.PresentationDefinition
-import eu.europa.ec.eudi.prex.PresentationSubmission
 import kotlinx.serialization.json.JsonObject
 import java.security.cert.X509Certificate
 import java.time.Clock
@@ -53,87 +51,14 @@ value class Nonce(val value: String) {
 
 typealias Jwt = String
 
-enum class IdTokenType {
-    SubjectSigned,
-    AttesterSigned,
-}
-
-/**
- * The requirements of the Verifiable Presentations to be presented.
- */
-sealed interface PresentationQuery {
-
-    /**
-     * The requirements of the Verifiable Presentations to be presented, expressed using Presentation Definition.
-     */
-    data class ByPresentationDefinition(val presentationDefinition: PresentationDefinition) : PresentationQuery
-
-    /**
-     * The requirements of the Verifiable Presentations to be presented, expressed using DCQL.
-     */
-    data class ByDigitalCredentialsQueryLanguage(val query: DCQL) : PresentationQuery
-}
-
-val PresentationQuery.presentationDefinitionOrNull: PresentationDefinition?
-    get() = when (this) {
-        is PresentationQuery.ByPresentationDefinition -> presentationDefinition
-        is PresentationQuery.ByDigitalCredentialsQueryLanguage -> null
-    }
-
-val PresentationQuery.dcqlQueryOrNull: DCQL?
-    get() = when (this) {
-        is PresentationQuery.ByPresentationDefinition -> null
-        is PresentationQuery.ByDigitalCredentialsQueryLanguage -> query
-    }
-
 /**
  * Represents what the [Presentation] is asking
  * from the wallet
  */
-sealed interface PresentationType {
-    data class IdTokenRequest(
-        val idTokenType: List<IdTokenType>,
-    ) : PresentationType
-
-    data class VpTokenRequest(
-        val presentationQuery: PresentationQuery,
-        val transactionData: NonEmptyList<TransactionData>?,
-    ) : PresentationType
-
-    data class IdAndVpToken(
-        val idTokenType: List<IdTokenType>,
-        val presentationQuery: PresentationQuery,
-        val transactionData: NonEmptyList<TransactionData>?,
-    ) : PresentationType
-}
-
-val PresentationType.presentationQueryOrNull: PresentationQuery?
-    get() = when (this) {
-        is PresentationType.IdTokenRequest -> null
-        is PresentationType.VpTokenRequest -> presentationQuery
-        is PresentationType.IdAndVpToken -> presentationQuery
-    }
-
-val PresentationType.presentationDefinitionOrNull: PresentationDefinition?
-    get() = when (this) {
-        is PresentationType.IdTokenRequest -> null
-        is PresentationType.VpTokenRequest -> presentationQuery.presentationDefinitionOrNull
-        is PresentationType.IdAndVpToken -> presentationQuery.presentationDefinitionOrNull
-    }
-
-val PresentationType.dcqlQueryOrNull: DCQL?
-    get() = when (this) {
-        is PresentationType.IdTokenRequest -> null
-        is PresentationType.VpTokenRequest -> presentationQuery.dcqlQueryOrNull
-        is PresentationType.IdAndVpToken -> presentationQuery.dcqlQueryOrNull
-    }
-
-val PresentationType.transactionDataOrNull: NonEmptyList<TransactionData>?
-    get() = when (this) {
-        is PresentationType.IdTokenRequest -> null
-        is PresentationType.VpTokenRequest -> transactionData
-        is PresentationType.IdAndVpToken -> transactionData
-    }
+data class VpTokenRequest(
+    val query: DCQL,
+    val transactionData: NonEmptyList<TransactionData>?,
+)
 
 sealed interface VerifiablePresentation {
     val format: Format
@@ -154,73 +79,22 @@ sealed interface VerifiablePresentation {
 /**
  * The Wallet's response to a 'vp_token' request.
  */
-sealed interface VpContent {
-
-    /**
-     * A 'vp_token' response as defined by Presentation Exchange.
-     */
-    data class PresentationExchange(
-        val verifiablePresentations: NonEmptyList<VerifiablePresentation>,
-        val presentationSubmission: PresentationSubmission,
-    ) : VpContent {
-        init {
-            require(verifiablePresentations.size == verifiablePresentations.distinct().size)
-        }
-    }
-
-    /**
-     * A 'vp_token' response as defined by DCQL.
-     */
-    data class DCQL(val verifiablePresentations: Map<QueryId, VerifiablePresentation>) : VpContent {
-        init {
-            require(verifiablePresentations.isNotEmpty())
-        }
+@JvmInline
+value class VerifiablePresentations(val value: Map<QueryId, List<VerifiablePresentation>>) {
+    init {
+        require(value.isNotEmpty())
+        require(value.values.all { it.isNotEmpty() })
     }
 }
-
-internal fun VpContent.verifiablePresentations(): List<VerifiablePresentation> =
-    when (this) {
-        is VpContent.PresentationExchange -> verifiablePresentations
-        is VpContent.DCQL -> verifiablePresentations.values.distinct()
-    }
-
-internal fun VpContent.presentationSubmissionOrNull(): PresentationSubmission? =
-    when (this) {
-        is VpContent.PresentationExchange -> presentationSubmission
-        is VpContent.DCQL -> null
-    }
 
 sealed interface WalletResponse {
 
-    data class IdToken(
-        val idToken: Jwt,
-    ) : WalletResponse {
-        init {
-            require(idToken.isNotEmpty())
-        }
-    }
-
     data class VpToken(
-        val vpContent: VpContent,
+        val verifiablePresentations: VerifiablePresentations,
         val trustInfo: List<TrustInfo>? = null,
     ) : WalletResponse
 
-    data class IdAndVpToken(
-        val idToken: Jwt,
-        val vpContent: VpContent,
-        val trustInfo: List<TrustInfo>? = null,
-    ) : WalletResponse {
-        init {
-            require(idToken.isNotEmpty())
-        }
-    }
-
     data class Error(val value: String, val description: String?) : WalletResponse
-}
-
-@JvmInline
-value class EphemeralEncryptionKeyPairJWK(val value: String) {
-    companion object
 }
 
 @JvmInline
@@ -237,7 +111,6 @@ sealed interface GetWalletResponseMethod {
 sealed interface Presentation {
     val id: TransactionId
     val initiatedAt: Instant
-    val type: PresentationType
 
     /**
      * A presentation process that has been just requested
@@ -245,13 +118,12 @@ sealed interface Presentation {
     class Requested(
         override val id: TransactionId,
         override val initiatedAt: Instant,
-        override val type: PresentationType,
+        val query: DCQL,
+        val transactionData: NonEmptyList<TransactionData>?,
         val requestId: RequestId,
         val requestUriMethod: RequestUriMethod,
         val nonce: Nonce,
-        val jarmEncryptionEphemeralKey: EphemeralEncryptionKeyPairJWK?,
-        val responseMode: ResponseModeOption,
-        val presentationDefinitionMode: EmbedOption<RequestId>,
+        val responseMode: ResponseMode,
         val getWalletResponseMethod: GetWalletResponseMethod,
         val issuerChain: NonEmptyList<X509Certificate>?,
     ) : Presentation
@@ -265,12 +137,12 @@ sealed interface Presentation {
     class RequestObjectRetrieved private constructor(
         override val id: TransactionId,
         override val initiatedAt: Instant,
-        override val type: PresentationType,
+        val query: DCQL,
+        val transactionData: NonEmptyList<TransactionData>?,
         val requestId: RequestId,
         val requestObjectRetrievedAt: Instant,
         val nonce: Nonce,
-        val ephemeralEcPrivateKey: EphemeralEncryptionKeyPairJWK?,
-        val responseMode: ResponseModeOption,
+        val responseMode: ResponseMode,
         val getWalletResponseMethod: GetWalletResponseMethod,
         val issuerChain: NonEmptyList<X509Certificate>?,
     ) : Presentation {
@@ -284,11 +156,11 @@ sealed interface Presentation {
                     RequestObjectRetrieved(
                         requested.id,
                         requested.initiatedAt,
-                        requested.type,
+                        requested.query,
+                        requested.transactionData,
                         requested.requestId,
                         at,
                         requested.nonce,
-                        requested.jarmEncryptionEphemeralKey,
                         requested.responseMode,
                         requested.getWalletResponseMethod,
                         requested.issuerChain,
@@ -303,7 +175,6 @@ sealed interface Presentation {
     class Submitted private constructor(
         override val id: TransactionId,
         override val initiatedAt: Instant,
-        override val type: PresentationType,
         val requestId: RequestId,
         var requestObjectRetrievedAt: Instant,
         var submittedAt: Instant,
@@ -327,7 +198,6 @@ sealed interface Presentation {
                     Submitted(
                         id,
                         initiatedAt,
-                        type,
                         requestId,
                         requestObjectRetrievedAt,
                         at,
@@ -343,7 +213,6 @@ sealed interface Presentation {
     class TimedOut private constructor(
         override val id: TransactionId,
         override val initiatedAt: Instant,
-        override val type: PresentationType,
         val requestObjectRetrievedAt: Instant? = null,
         val submittedAt: Instant? = null,
         val timedOutAt: Instant,
@@ -351,7 +220,7 @@ sealed interface Presentation {
         companion object {
             fun timeOut(presentation: Requested, at: Instant): Either<Throwable, TimedOut> = Either.catch {
                 require(presentation.initiatedAt.isBefore(at))
-                TimedOut(presentation.id, presentation.initiatedAt, presentation.type, null, null, at)
+                TimedOut(presentation.id, presentation.initiatedAt, null, null, at)
             }
 
             fun timeOut(presentation: RequestObjectRetrieved, at: Instant): Either<Throwable, TimedOut> = Either.catch {
@@ -359,7 +228,6 @@ sealed interface Presentation {
                 TimedOut(
                     presentation.id,
                     presentation.initiatedAt,
-                    presentation.type,
                     presentation.requestObjectRetrievedAt,
                     null,
                     at,
@@ -371,7 +239,6 @@ sealed interface Presentation {
                 TimedOut(
                     presentation.id,
                     presentation.initiatedAt,
-                    presentation.type,
                     presentation.requestObjectRetrievedAt,
                     presentation.submittedAt,
                     at,

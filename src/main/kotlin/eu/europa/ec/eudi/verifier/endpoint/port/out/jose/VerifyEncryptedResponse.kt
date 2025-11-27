@@ -13,18 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package eu.europa.ec.eudi.verifier.endpoint.adapter.input.web.form.strategy
+package eu.europa.ec.eudi.verifier.endpoint.port.out.jose
 
-import kotlinx.serialization.json.JsonElement
-import org.springframework.util.MultiValueMap
+import arrow.core.Either
+import com.nimbusds.jose.jwk.JWK
+import eu.europa.ec.eudi.verifier.endpoint.domain.Jwt
+import eu.europa.ec.eudi.verifier.endpoint.domain.Nonce
+import eu.europa.ec.eudi.verifier.endpoint.port.input.AuthorisationResponseTO
+fun interface VerifyEncryptedResponse {
 
-/**
- * Strategy for parsing vp_token from different wallet implementations
- */
-interface VpTokenParsingStrategy {
-    /**
-     * Extracts vp_token from form data.
-     * @return JsonElement if vp_token found in supported format, null otherwise
-     */
-    fun extractVpToken(formData: MultiValueMap<String, String>): JsonElement?
+    operator fun invoke(
+        ephemeralResponseEncryptionKey: JWK,
+        encryptedResponse: Jwt,
+        apv: Nonce,
+    ): Either<Throwable, AuthorisationResponseTO>
 }

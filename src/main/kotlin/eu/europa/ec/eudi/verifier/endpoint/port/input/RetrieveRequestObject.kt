@@ -16,22 +16,14 @@
 package eu.europa.ec.eudi.verifier.endpoint.port.input
 
 import arrow.core.Either
-import arrow.core.getOrElse
 import arrow.core.raise.Raise
 import arrow.core.raise.either
 import arrow.core.raise.ensure
-import arrow.core.toNonEmptyListOrNull
 import com.nimbusds.jose.EncryptionMethod
 import com.nimbusds.jose.JWEAlgorithm
 import com.nimbusds.jose.jwk.JWK
 import com.nimbusds.jose.jwk.JWKSet
-import eu.europa.ec.eudi.prex.PresentationDefinition
-import eu.europa.ec.eudi.sdjwt.SdJwtVcSpec
-import eu.europa.ec.eudi.sdjwt.vc.KtorHttpClientFactory
-import eu.europa.ec.eudi.verifier.endpoint.adapter.out.json.decodeAs
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.json.jsonSupport
-import eu.europa.ec.eudi.verifier.endpoint.adapter.out.metadata.MsoMdocFormatTO
-import eu.europa.ec.eudi.verifier.endpoint.adapter.out.metadata.SdJwtVcFormatTO
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.utils.getOrThrow
 import eu.europa.ec.eudi.verifier.endpoint.domain.*
 import eu.europa.ec.eudi.verifier.endpoint.port.out.jose.CreateJar
@@ -45,7 +37,6 @@ import io.ktor.client.statement.*
 import kotlinx.serialization.Required
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import java.time.Clock
 import kotlin.reflect.KClass
@@ -91,10 +82,10 @@ class RetrieveRequestObjectLive(
     private val verifierConfig: VerifierConfig,
     private val clock: Clock,
     private val publishPresentationEvent: PublishPresentationEvent,
-    private val clientFactory: KtorHttpClientFactory,
+    httpClient: HttpClient,
 ) : RetrieveRequestObject {
 
-    private val walletMetadataValidator = WalletMetadataValidator(verifierConfig, clientFactory)
+    private val walletMetadataValidator = WalletMetadataValidator(verifierConfig, httpClient)
 
     override suspend operator fun invoke(
         requestId: RequestId,
@@ -176,63 +167,55 @@ class RetrieveRequestObjectLive(
 /**
  * Validator for Wallet Metadata.
  */
-private class WalletMetadataValidator(private val verifierConfig: VerifierConfig, private val clientFactory: KtorHttpClientFactory) {
+private class WalletMetadataValidator(private val verifierConfig: VerifierConfig, private val httpClient: HttpClient) {
 
     suspend fun validate(
         metadata: WalletMetadataTO,
         presentation: Presentation.Requested,
     ): Either<RetrieveRequestObjectError, EncryptionRequirement> = either {
-        ensureWalletSupportPresentationDefinitionUriIfRequired(metadata, presentation)
         ensureWalletSupportsRequiredVpFormats(metadata, presentation)
-        ensureWalletSupportsVerifierClientIdScheme(metadata)
+        ensureWalletSupportsVerifierClientIdPrefix(metadata)
         ensureVerifierSupportsWalletJarSigningAlgorithms(metadata)
-        ensureWalletSupportsRequiredResponseType(metadata, presentation)
+        ensureWalletSupportsRequiredResponseType(metadata)
         ensureWalletSupportsRequiredResponseMode(metadata, presentation)
         encryptionRequirement(metadata)
-    }
-
-    private fun Raise<RetrieveRequestObjectError>.ensureWalletSupportPresentationDefinitionUriIfRequired(
-        metadata: WalletMetadataTO,
-        presentation: Presentation.Requested,
-    ) {
-        val supportsPresentationDefinitionByReference =
-            metadata.presentationDefinitionUriSupported ?: OpenId4VPSpec.DEFAULT_PRESENTATION_DEFINITION_URI_SUPPORTED
-        val requiresPresentationDefinitionByReference =
-            presentation.presentationDefinitionMode is EmbedOption.ByReference && null != presentation.type.presentationDefinitionOrNull
-        ensure(supportsPresentationDefinitionByReference || !requiresPresentationDefinitionByReference) {
-            RetrieveRequestObjectError.UnsupportedWalletMetadata(
-                "Wallet does not support fetching PresentationDefinition by reference",
-            )
-        }
     }
 
     private fun Raise<RetrieveRequestObjectError>.ensureWalletSupportsRequiredVpFormats(
         metadata: WalletMetadataTO,
         presentation: Presentation.Requested,
     ) {
-        val walletSupportedVpFormats = metadata.vpFormatsSupported.toVpFormats().getOrElse {
-            raise(RetrieveRequestObjectError.UnsupportedWalletMetadata("Wallet metadata contains malformed VpFormats", it))
-        }.groupBy { it::class }
-        val verifierSupportedVpFormats = verifierConfig.clientMetaData.vpFormats
-        val queryRequiredVpFormats = when (val query = presentation.type.presentationQueryOrNull) {
-            is PresentationQuery.ByPresentationDefinition -> query.presentationDefinition.vpFormats(verifierSupportedVpFormats)
-            is PresentationQuery.ByDigitalCredentialsQueryLanguage -> query.query.vpFormats(verifierSupportedVpFormats)
-            null -> emptyList()
-        }.groupBy { it::class }
-        val walletSupportsAllRequiredVpFormats = queryRequiredVpFormats.map { (vpFormatType, vpFormats) ->
-            val walletSupported = walletSupportedVpFormats[vpFormatType].orEmpty()
-            vpFormats.all { required -> walletSupported.any { supported -> supported.supports(required) } }
+        val walletSupportedVpFormats = metadata.vpFormatsSupported
+        val queryRequiredFormats = presentation.query.credentials.value.map { it.format }.toSet()
+
+        val verifierSupportedVpFormats = verifierConfig.clientMetaData.vpFormatsSupported
+        val walletSupportsAllRequiredVpFormats = queryRequiredFormats.map { requiredFormat ->
+            when (requiredFormat) {
+                Format.SdJwtVc -> {
+                    val verifierSupported = checkNotNull(verifierSupportedVpFormats.sdJwtVc)
+                    val walletSupported = walletSupportedVpFormats.sdJwtVc
+                    null != walletSupported && commonGround(walletSupported = walletSupported, verifierSupported = verifierSupported)
+                }
+
+                Format.MsoMdoc -> {
+                    checkNotNull(verifierSupportedVpFormats.msoMdoc)
+                    null != walletSupportedVpFormats.msoMdoc
+                }
+
+                else -> false
+            }
         }.foldRight(true, Boolean::and)
+
         ensure(walletSupportsAllRequiredVpFormats) {
             RetrieveRequestObjectError.UnsupportedWalletMetadata("Wallet does not support all required VpFormats")
         }
     }
 
-    private fun Raise<RetrieveRequestObjectError>.ensureWalletSupportsVerifierClientIdScheme(metadata: WalletMetadataTO) {
-        val clientIdScheme = verifierConfig.verifierId.clientIdScheme
-        val supportedClientIdSchemes = metadata.clientIdSchemesSupported ?: OpenId4VPSpec.DEFAULT_CLIENT_ID_SCHEMES_SUPPORTED
-        ensure(clientIdScheme in supportedClientIdSchemes) {
-            RetrieveRequestObjectError.UnsupportedWalletMetadata("Wallet does not support Client Id Scheme '$clientIdScheme'")
+    private fun Raise<RetrieveRequestObjectError>.ensureWalletSupportsVerifierClientIdPrefix(metadata: WalletMetadataTO) {
+        val clientIdPrefix = verifierConfig.verifierId.clientIdPrefix
+        val supportedClientPrefixes = metadata.clientIdPrefixesSupported ?: OpenId4VPSpec.DEFAULT_CLIENT_ID_PREFIXES_SUPPORTED
+        ensure(clientIdPrefix in supportedClientPrefixes) {
+            RetrieveRequestObjectError.UnsupportedWalletMetadata("Wallet does not support Client Id Prefix '$clientIdPrefix'")
         }
     }
 
@@ -247,9 +230,8 @@ private class WalletMetadataValidator(private val verifierConfig: VerifierConfig
 
     private fun Raise<RetrieveRequestObjectError>.ensureWalletSupportsRequiredResponseType(
         metadata: WalletMetadataTO,
-        presentation: Presentation.Requested,
     ) {
-        val responseType = presentation.type.responseType
+        val responseType = OpenId4VPSpec.VP_TOKEN
         ensure(responseType in metadata.responseTypesSupported) {
             RetrieveRequestObjectError.UnsupportedWalletMetadata("Wallet does not support Response Type '$responseType'")
         }
@@ -259,7 +241,7 @@ private class WalletMetadataValidator(private val verifierConfig: VerifierConfig
         metadata: WalletMetadataTO,
         presentation: Presentation.Requested,
     ) {
-        val responseMode = presentation.responseMode.name()
+        val responseMode = presentation.responseMode.option.name()
         val supportedResponseModes = metadata.responseModesSupported ?: RFC8414.DEFAULT_RESPONSE_MODES_SUPPORTED
         ensure(responseMode in supportedResponseModes) {
             RetrieveRequestObjectError.UnsupportedWalletMetadata("Wallet does not support Response Mode '$responseMode'")
@@ -273,7 +255,7 @@ private class WalletMetadataValidator(private val verifierConfig: VerifierConfig
             )
         }
 
-        val jwks = metadata.jwks?.toJwks()?.bind() ?: metadata.jwksUri?.let { clientFactory().use { client -> client.getJwks(it).bind() } }
+        val jwks = metadata.jwks?.toJwks()?.bind() ?: metadata.jwksUri?.let { httpClient.getJwks(it).bind() }
         return if (null == jwks) {
             EncryptionRequirement.NotRequired
         } else {
@@ -294,15 +276,12 @@ private class WalletMetadataValidator(private val verifierConfig: VerifierConfig
  */
 @Serializable
 private data class WalletMetadataTO(
-    @SerialName(OpenId4VPSpec.PRESENTATION_DEFINITION_URI_SUPPORTED)
-    val presentationDefinitionUriSupported: Boolean? = OpenId4VPSpec.DEFAULT_PRESENTATION_DEFINITION_URI_SUPPORTED,
-
     @Required
     @SerialName(OpenId4VPSpec.VP_FORMATS_SUPPORTED)
-    val vpFormatsSupported: JsonObject,
+    val vpFormatsSupported: VpFormatsSupported,
 
-    @SerialName(OpenId4VPSpec.CLIENT_ID_SCHEMES_SUPPORTED)
-    val clientIdSchemesSupported: List<String>? = OpenId4VPSpec.DEFAULT_CLIENT_ID_SCHEMES_SUPPORTED,
+    @SerialName(OpenId4VPSpec.CLIENT_ID_PREFIXES_SUPPORTED)
+    val clientIdPrefixesSupported: List<String>? = OpenId4VPSpec.DEFAULT_CLIENT_ID_PREFIXES_SUPPORTED,
 
     @SerialName(RFC8414.JWKS)
     val jwks: JsonObject? = null,
@@ -344,76 +323,36 @@ private val RetrieveRequestObjectMethod.walletNonceOrNull: String?
         is RetrieveRequestObjectMethod.Post -> walletNonce
     }
 
-private val VerifierId.clientIdScheme: String
+private val VerifierId.clientIdPrefix: String
     get() = when (this) {
-        is VerifierId.PreRegistered -> OpenId4VPSpec.CLIENT_ID_SCHEME_PRE_REGISTERED
-        is VerifierId.X509SanDns -> OpenId4VPSpec.CLIENT_ID_SCHEME_X509_SAN_DNS
-        is VerifierId.X509SanUri -> OpenId4VPSpec.CLIENT_ID_SCHEME_X509_SAN_URI
-    }
-
-private val PresentationType.responseType: String
-    get() = when (this) {
-        is PresentationType.IdTokenRequest -> "id_token"
-        is PresentationType.VpTokenRequest -> "vp_token"
-        is PresentationType.IdAndVpToken -> "vp_token id_token"
+        is VerifierId.PreRegistered -> OpenId4VPSpec.CLIENT_ID_PREFIX_PRE_REGISTERED
+        is VerifierId.X509SanDns -> OpenId4VPSpec.CLIENT_ID_PREFIX_X509_SAN_DNS
+        is VerifierId.X509Hash -> OpenId4VPSpec.CLIENT_ID_PREFIX_X509_HASH
     }
 
 private fun ResponseModeOption.name(): String =
     when (this) {
-        ResponseModeOption.DirectPost -> OpenId4VPSpec.DIRECT_POST
-        ResponseModeOption.DirectPostJwt -> OpenId4VPSpec.DIRECT_POST_JWT
+        ResponseModeOption.DirectPost -> OpenId4VPSpec.RESPONSE_MODE_DIRECT_POST
+        ResponseModeOption.DirectPostJwt -> OpenId4VPSpec.RESPONSE_MODE_DIRECT_POST_JWT
     }
 
-private fun JsonObject.toVpFormats(): Either<Throwable, List<VpFormat>> =
-    Either.catch {
-        mapNotNull { (identifier, serializedProperties) ->
-            when (identifier) {
-                SdJwtVcSpec.MEDIA_SUBTYPE_VC_SD_JWT, SdJwtVcSpec.MEDIA_SUBTYPE_DC_SD_JWT ->
-                    serializedProperties.decodeAs<SdJwtVcFormatTO>()
-                        .getOrThrow()
-                        .let { properties ->
-                            VpFormat.SdJwtVc(
-                                sdJwtAlgorithms = properties.sdJwtAlgorithms.toNonEmptyListOrNull()!!,
-                                kbJwtAlgorithms = properties.kbJwtAlgorithms.toNonEmptyListOrNull()!!,
-                            )
-                        }
+private fun <T> commonGround(
+    walletSupported: Collection<T>?,
+    verifierSupported: Collection<T>?,
+): Boolean =
+    if (null != walletSupported && null != verifierSupported) walletSupported.intersect(verifierSupported).isNotEmpty()
+    else true
 
-                OpenId4VPSpec.FORMAT_MSO_MDOC ->
-                    serializedProperties.decodeAs<MsoMdocFormatTO>()
-                        .getOrThrow()
-                        .let { properties -> VpFormat.MsoMdoc(properties.algorithms.toNonEmptyListOrNull()!!) }
-
-                else -> null
-            }
-        }.distinct()
-    }
-
-private fun PresentationDefinition.vpFormats(supported: VpFormats): List<VpFormat> =
-    inputDescriptors.flatMap { inputDescriptor ->
-        val format = inputDescriptor.format ?: format
-        format?.jsonObject()?.toVpFormats()?.getOrThrow() ?: listOf(supported.sdJwtVc, supported.msoMdoc)
-    }.distinct()
-
-private fun DCQL.vpFormats(supported: VpFormats): List<VpFormat> =
-    credentials.mapNotNull {
-        when (it.format.value) {
-            SdJwtVcSpec.MEDIA_SUBTYPE_VC_SD_JWT, SdJwtVcSpec.MEDIA_SUBTYPE_DC_SD_JWT -> supported.sdJwtVc
-            OpenId4VPSpec.FORMAT_MSO_MDOC -> supported.msoMdoc
-            else -> null
-        }
-    }.distinct()
-
-private fun VpFormat.supports(other: VpFormat): Boolean =
-    when (this) {
-        is VpFormat.SdJwtVc ->
-            other is VpFormat.SdJwtVc &&
-                sdJwtAlgorithms.intersect(other.sdJwtAlgorithms).isNotEmpty() &&
-                kbJwtAlgorithms.intersect(other.kbJwtAlgorithms).isNotEmpty()
-
-        is VpFormat.MsoMdoc ->
-            other is VpFormat.MsoMdoc &&
-                algorithms.intersect(other.algorithms).isNotEmpty()
-    }
+private fun commonGround(
+    walletSupported: VpFormatsSupported.SdJwtVc,
+    verifierSupported: VpFormatsSupported.SdJwtVc,
+): Boolean {
+    val sdJwtAlgorithmCommonGround =
+        commonGround(walletSupported = walletSupported.sdJwtAlgorithms, verifierSupported = verifierSupported.sdJwtAlgorithms)
+    val kbJwtAlgorithmCommonGround =
+        commonGround(walletSupported = walletSupported.kbJwtAlgorithms, verifierSupported = verifierSupported.kbJwtAlgorithms)
+    return sdJwtAlgorithmCommonGround && kbJwtAlgorithmCommonGround
+}
 
 private fun JsonObject.toJwks(): Either<RetrieveRequestObjectError.InvalidWalletMetadata, JWKSet> =
     Either.catch {

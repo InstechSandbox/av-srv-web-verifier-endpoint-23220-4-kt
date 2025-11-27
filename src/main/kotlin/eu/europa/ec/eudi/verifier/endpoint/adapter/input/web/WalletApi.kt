@@ -15,16 +15,10 @@
  */
 package eu.europa.ec.eudi.verifier.endpoint.adapter.input.web
 
-import arrow.core.Either
-import arrow.core.getOrElse
 import com.nimbusds.jose.jwk.JWK
 import com.nimbusds.jose.jwk.JWKSet
-import eu.europa.ec.eudi.prex.PresentationDefinition
-import eu.europa.ec.eudi.prex.PresentationExchange
-import eu.europa.ec.eudi.verifier.endpoint.adapter.input.web.form.AuthorisationResponseMapper
 import eu.europa.ec.eudi.verifier.endpoint.domain.*
 import eu.europa.ec.eudi.verifier.endpoint.port.input.*
-import eu.europa.ec.eudi.verifier.endpoint.port.input.QueryResponse.*
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.*
 import org.slf4j.Logger
@@ -44,10 +38,8 @@ private val REQUEST_OBJECT_MEDIA_TYPE = MediaType.parseMediaType(RFC9101.REQUEST
  */
 class WalletApi(
     private val retrieveRequestObject: RetrieveRequestObject,
-    private val getPresentationDefinition: GetPresentationDefinition,
     private val postWalletResponse: PostWalletResponse,
     private val signingKey: JWK,
-    private val authorisationResponseMapper: AuthorisationResponseMapper,
 ) {
 
     private val logger: Logger = LoggerFactory.getLogger(WalletApi::class.java)
@@ -62,7 +54,6 @@ class WalletApi(
             contentType(MediaType.APPLICATION_FORM_URLENCODED) and accept(REQUEST_OBJECT_MEDIA_TYPE),
             this@WalletApi::handleRetrieveRequestObject,
         )
-        GET(PRESENTATION_DEFINITION_PATH, this@WalletApi::handleGetPresentationDefinition)
         POST(
             WALLET_RESPONSE_PATH,
             this@WalletApi::handlePostWalletResponse,
@@ -109,31 +100,14 @@ class WalletApi(
     }
 
     /**
-     * Handles a request placed by wallet, input order to obtain
-     * the [PresentationDefinition] of the presentation
-     */
-    private suspend fun handleGetPresentationDefinition(req: ServerRequest): ServerResponse {
-        suspend fun pdFound(pd: PresentationDefinition) = ok().json().bodyValueAndAwait(pd)
-
-        val requestId = req.requestId()
-        logger.info("Handling GetPresentationDefinition for ${requestId.value} ...")
-
-        return when (val result = getPresentationDefinition(requestId)) {
-            is NotFound -> notFound().buildAndAwait()
-            is InvalidState -> badRequest().buildAndAwait()
-            is Found -> pdFound(result.value)
-        }
-    }
-
-    /**
      * Handles a POST request placed by the wallet, input order to submit
-     * the [AuthorisationResponse], containing the id_token, presentation_submission
+     * the [AuthorisationResponse], containing the presentation_submission
      * and the verifiableCredentials
      */
     private suspend fun handlePostWalletResponse(req: ServerRequest): ServerResponse = try {
         logger.info("Handling PostWalletResponse ...")
         val requestId = req.requestId()
-        val walletResponse = authorisationResponseMapper.mapFromFormData(req.awaitFormData())
+        val walletResponse = req.awaitFormData().walletResponse()
         postWalletResponse(requestId, walletResponse).fold(
             ifRight = { response ->
                 logger.info("PostWalletResponse processed")
@@ -174,12 +148,6 @@ class WalletApi(
 
         /**
          * Path template for the route for
-         * getting the presentation definition
-         */
-        const val PRESENTATION_DEFINITION_PATH = "/wallet/pd/{requestId}"
-
-        /**
-         * Path template for the route for
          * posting the Authorisation Response
          */
         const val WALLET_RESPONSE_PATH = "/wallet/direct_post/{requestId}"
@@ -191,39 +159,11 @@ class WalletApi(
 
         private fun MultiValueMap<String, String>.walletResponse(): AuthorisationResponse {
             fun directPost(): AuthorisationResponse.DirectPost {
-                fun String.toJsonElement(): JsonElement =
-                    Either.catch {
-                        Json.decodeFromString<JsonElement>(this)
-                    }.getOrElse { JsonPrimitive(this) }
-
-                fun extractVpToken(): JsonElement? {
-                    getFirst("vp_token")?.let { vpTokenValue ->
-                        return vpTokenValue.toJsonElement()
-                    }
-                    val vpTokenKeys = keys.filter { it.startsWith("vp_token[") && it.endsWith("]") }
-                    if (vpTokenKeys.isNotEmpty()) {
-                        val vpTokenObject = buildJsonObject {
-                            vpTokenKeys.forEach { fullKey ->
-                                val innerKey = fullKey.substringAfter("vp_token[").substringBefore("]")
-                                val value = getFirst(fullKey)
-                                if (value != null) {
-                                    put(innerKey, JsonPrimitive(value))
-                                }
-                            }
-                        }
-                        return vpTokenObject
-                    }
-
-                    return null
-                }
+                fun String.toJsonObject(): JsonObject = Json.decodeFromString<JsonObject>(this)
 
                 return AuthorisationResponseTO(
                     state = getFirst("state"),
-                    idToken = getFirst("id_token"),
-                    vpToken = extractVpToken(),
-                    presentationSubmission = getFirst("presentation_submission")?.let {
-                        PresentationExchange.jsonParser.decodePresentationSubmission(it).getOrThrow()
-                    },
+                    vpToken = getFirst("vp_token")?.toJsonObject(),
                     error = getFirst("error"),
                     errorDescription = getFirst("error_description"),
                 ).run { AuthorisationResponse.DirectPost(this) }
@@ -238,9 +178,6 @@ class WalletApi(
 
         fun requestJwtByReference(baseUrl: String): EmbedOption.ByReference<RequestId> =
             urlBuilder(baseUrl = baseUrl, pathTemplate = REQUEST_JWT_PATH)
-
-        fun presentationDefinitionByReference(baseUrl: String): EmbedOption.ByReference<RequestId> =
-            urlBuilder(baseUrl = baseUrl, pathTemplate = PRESENTATION_DEFINITION_PATH)
 
         fun publicJwkSet(baseUrl: String): EmbedOption.ByReference<Any> = EmbedOption.ByReference { _ ->
             DefaultUriBuilderFactory(baseUrl)
@@ -272,8 +209,8 @@ class WalletApi(
                     put("error", "IncorrectState")
                     put("description", "Wallet responded with a 'state' that does not match the expected one.")
                 }
-                is WalletResponseValidationError.InvalidJarm -> {
-                    put("error", "InvalidJarm")
+                is WalletResponseValidationError.InvalidEncryptedResponse -> {
+                    put("error", "InvalidEncryptedResponse")
                     put("description", this@toJson.error.message)
                     put("cause", this@toJson.error.cause?.message)
                 }
@@ -286,18 +223,6 @@ class WalletApi(
                     put("description", this@toJson.message)
                     this@toJson.cause?.let { put("cause", message) }
                 }
-                WalletResponseValidationError.MissingIdToken -> {
-                    put("error", "MissingIdToken")
-                    put("description", "Expected an id_token to be presented but was not.")
-                }
-                WalletResponseValidationError.MissingPresentationSubmission -> {
-                    put("error", "MissingPresentationSubmission")
-                    put("description", "Expected 'presentation_submission' to be posted by wallet but was not.")
-                }
-                WalletResponseValidationError.MissingState -> {
-                    put("error", "MissingState")
-                    put("description", "Missing state from JARM")
-                }
                 WalletResponseValidationError.MissingVpToken -> {
                     put("error", "MissingVpToken")
                     put("description", "Expected 'vp_token' to be posted by wallet but was not.")
@@ -309,14 +234,6 @@ class WalletApi(
                 WalletResponseValidationError.PresentationNotInExpectedState -> {
                     put("error", "PresentationNotInExpectedState")
                     put("description", "The referenced presentation transaction is not in state to accept wallet response.")
-                }
-                WalletResponseValidationError.PresentationSubmissionMustNotBePresent -> {
-                    put("error", "PresentationSubmissionMustNotBePresent")
-                    put(
-                        "description",
-                        "Wallet posted 'presentation_submission' while not expected to. " +
-                            "A response to a DCQL presentation query must not include a 'presentation_submission'.",
-                    )
                 }
                 WalletResponseValidationError.RequiredCredentialSetNotSatisfied -> {
                     put("error", "RequiredCredentialSetNotSatisfied")

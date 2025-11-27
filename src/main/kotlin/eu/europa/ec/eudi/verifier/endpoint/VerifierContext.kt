@@ -38,8 +38,7 @@ import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cfg.GenerateRequestIdNimb
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cfg.GenerateTransactionIdNimbus
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.jose.CreateJarNimbus
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.jose.GenerateEphemeralEncryptionKeyPairNimbus
-import eu.europa.ec.eudi.verifier.endpoint.adapter.out.jose.ParseJarmOptionNimbus
-import eu.europa.ec.eudi.verifier.endpoint.adapter.out.jose.VerifyJarmEncryptedJwtNimbus
+import eu.europa.ec.eudi.verifier.endpoint.adapter.out.jose.VerifyEncryptedResponseWithNimbus
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.json.jsonSupport
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.lotl.FetchLOTLCertificatesDSS
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.mso.DeviceResponseValidator
@@ -107,7 +106,7 @@ internal fun beans(clock: Clock) = beans {
     // JOSE
     //
     bean { CreateJarNimbus() }
-    bean { VerifyJarmEncryptedJwtNimbus }
+    bean { VerifyEncryptedResponseWithNimbus(ref<VerifierConfig>().clientMetaData.responseEncryptionOption) }
 
     //
     // Persistence
@@ -124,7 +123,15 @@ internal fun beans(clock: Clock) = beans {
         bean { deletePresentationsInitiatedBefore }
     }
 
-    bean { CreateQueryWalletResponseRedirectUri.Simple }
+    bean {
+        val allowedRedirectUriSchemes = env.getOptionalList(
+            name = "verifier.allowedRedirectUriSchemes",
+            filter = String::isNotBlank,
+            transform = String::trim,
+        )?.toNonEmptySet() ?: nonEmptySetOf("https")
+
+        CreateQueryWalletResponseRedirectUri.simple(allowedRedirectUriSchemes)
+    }
 
     //
     // Ktor
@@ -139,17 +146,13 @@ internal fun beans(clock: Clock) = beans {
 
     profile("self-signed") {
         log.warn("Using Ktor HttpClients that trust self-signed certificates and perform no hostname verification with proxy")
-        bean<KtorHttpClientFactory> {
-            {
-                createHttpClient(trustSelfSigned = true, httpProxy = proxy)
-            }
+        bean<HttpClient> {
+            createHttpClient(trustSelfSigned = true, httpProxy = proxy)
         }
     }
     profile("!self-signed") {
-        bean<KtorHttpClientFactory> {
-            {
-                createHttpClient(httpProxy = proxy)
-            }
+        bean<HttpClient> {
+            createHttpClient(httpProxy = proxy)
         }
     }
 
@@ -169,7 +172,6 @@ internal fun beans(clock: Clock) = beans {
             ref(),
             ref(),
             WalletApi.requestJwtByReference(env.publicUrl()),
-            WalletApi.presentationDefinitionByReference(env.publicUrl()),
             ref(),
             ref(),
             ref(),
@@ -179,7 +181,6 @@ internal fun beans(clock: Clock) = beans {
 
     bean { RetrieveRequestObjectLive(ref(), ref(), ref(), ref(), ref(), ref(), ref()) }
 
-    bean { GetPresentationDefinitionLive(ref(), ref(), ref()) }
     bean {
         TimeoutPresentationsLive(
             ref(),
@@ -198,21 +199,20 @@ internal fun beans(clock: Clock) = beans {
 
     bean { GenerateResponseCode.Random }
     bean { PostWalletResponseLive(ref(), ref(), ref(), ref(), ref(), ref(), ref(), ref(), ref()) }
-    bean { GenerateEphemeralEncryptionKeyPairNimbus }
+    bean { GenerateEphemeralEncryptionKeyPairNimbus(ref<VerifierConfig>().clientMetaData.responseEncryptionOption) }
     bean { GetWalletResponseLive(ref(), ref(), ref()) }
     bean { GetPresentationEventsLive(ref(), ref()) }
-    bean(::GetClientMetadataLive)
 
     if (env.getProperty("verifier.validation.sdJwtVc.statusCheck.enabled", true)) {
         log.info("Enabling Status List Token validations")
         bean<StatusListTokenValidator> {
             val selfSignedProfileActive = env.activeProfiles.contains("self-signed")
-            val httpClientFactory = if (selfSignedProfileActive) {
-                { createHttpClient(withJsonContentNegotiation = false, trustSelfSigned = true, httpProxy = proxy) }
+            val httpClient = if (selfSignedProfileActive) {
+                createHttpClient(withJsonContentNegotiation = false, trustSelfSigned = true, httpProxy = proxy)
             } else {
-                { createHttpClient(withJsonContentNegotiation = false, trustSelfSigned = false, httpProxy = proxy) }
+                createHttpClient(withJsonContentNegotiation = false, trustSelfSigned = false, httpProxy = proxy)
             }
-            StatusListTokenValidator(httpClientFactory, clock, ref())
+            StatusListTokenValidator(httpClient, clock, ref())
         }
     }
 
@@ -270,8 +270,8 @@ internal fun beans(clock: Clock) = beans {
     //
     bean<TypeMetadataPolicy> {
         fun resolveTypeMetadata(): ResolveTypeMetadata {
-            val vcts = ref<TypeMetadataResolutionProperties>()
-                .vcts
+            val typeMetadataResolutionProperties = ref<TypeMetadataResolutionProperties>()
+            val vcts = typeMetadataResolutionProperties.vcts
                 .associateBy { Vct(it.vct) }.mapValues { Url(it.value.url) }
             require(vcts.isNotEmpty()) {
                 "verifier.validation.sdJwtVc.typeMetadata.resolution.vcts must be set"
@@ -290,20 +290,28 @@ internal fun beans(clock: Clock) = beans {
                 .maximumSize(cacheSize)
                 .asCache<Vct, ResolvedTypeMetadata>()
 
+            val sriValidator =
+                if (!typeMetadataResolutionProperties.integrity.enabled) {
+                    null
+                } else {
+                    SRIValidator(
+                        requireNotNull(typeMetadataResolutionProperties.integrity.allowedAlgorithms.toNonEmptySetOrNull()) {
+                            "verifier.validation.sdJwtVc.typeMetadata.resolution.integrity.allowedAlgorithms cannot be empty"
+                        },
+                    )
+                }
             val delegate = ResolveTypeMetadata(
-                LookupTypeMetadataFromUrl(
-                    ref(),
-                    vcts,
-                ),
-                LookupJsonSchemaUsingKtor(ref()),
+                LookupTypeMetadataFromUrl(ref(), vcts, sriValidator),
+                LookupJsonSchemaUsingKtor(ref(), sriValidator),
             )
 
             return object : ResolveTypeMetadata by delegate {
-                override suspend fun invoke(vct: Vct): Result<ResolvedTypeMetadata> =
+                override suspend fun invoke(
+                    vct: Vct,
+                    expectedIntegrity: DocumentIntegrity?,
+                ): Result<ResolvedTypeMetadata> =
                     runCatching {
-                        cache.get(vct) {
-                            super.invoke(vct).getOrThrow()
-                        }
+                        cache.get(vct) { super.invoke(vct, expectedIntegrity).getOrThrow() }
                     }
             }
         }
@@ -312,10 +320,17 @@ internal fun beans(clock: Clock) = beans {
             "verifier.validation.sdJwtVc.typeMetadata.policy",
             TypeMetadataPolicyEnum::class.java,
         )
+
+        val validateJsonSchema by lazy {
+            if (env.getProperty<Boolean>("verifier.validation.sdJwtVc.typeMetadata.jsonSchema.validation.enabled", true))
+                ValidateJsonSchema
+            else null
+        }
+
         when (policy) {
             TypeMetadataPolicyEnum.NotUsed -> TypeMetadataPolicy.NotUsed
-            TypeMetadataPolicyEnum.Optional -> TypeMetadataPolicy.Optional(resolveTypeMetadata(), ValidateJsonSchema)
-            TypeMetadataPolicyEnum.AlwaysRequired -> TypeMetadataPolicy.AlwaysRequired(resolveTypeMetadata(), ValidateJsonSchema)
+            TypeMetadataPolicyEnum.Optional -> TypeMetadataPolicy.Optional(resolveTypeMetadata(), validateJsonSchema)
+            TypeMetadataPolicyEnum.AlwaysRequired -> TypeMetadataPolicy.AlwaysRequired(resolveTypeMetadata(), validateJsonSchema)
             TypeMetadataPolicyEnum.RequiredFor -> {
                 val vcts = env.getOptionalList(
                     name = "verifier.validation.sdJwtVc.typeMetadata.policy.requiredFor",
@@ -329,7 +344,7 @@ internal fun beans(clock: Clock) = beans {
                 TypeMetadataPolicy.RequiredFor(
                     vcts,
                     resolveTypeMetadata(),
-                    ValidateJsonSchema,
+                    validateJsonSchema,
                 )
             }
         }
@@ -357,11 +372,13 @@ internal fun beans(clock: Clock) = beans {
         val walletApi = WalletApi(
             ref(),
             ref(),
-            ref(),
             ref<VerifierConfig>().verifierId.jarSigning.key,
+        )
+        val verifierApi = VerifierApi(
+            ref(),
+            ref(),
             ref(),
         )
-        val verifierApi = VerifierApi(ref(), ref(), ref(), ref())
         val staticContent = StaticContent()
         val swaggerUi = SwaggerUi(
             publicResourcesBasePath = env.getRequiredProperty("spring.webflux.static-path-pattern").removeSuffix("/**"),
@@ -535,11 +552,11 @@ private fun verifierConfig(environment: Environment, clock: Clock, resourceLoade
         val jarSigning = jarSigningConfig(environment, clock)
 
         val factory =
-            when (val clientIdScheme = environment.getProperty("verifier.clientIdScheme", "pre-registered")) {
+            when (val clientIdPrefix = environment.getProperty("verifier.clientIdPrefix", "pre-registered")) {
                 "pre-registered" -> VerifierId::PreRegistered
                 "x509_san_dns" -> VerifierId::X509SanDns
-                "x509_san_uri" -> VerifierId::X509SanUri
-                else -> error("Unknown clientIdScheme '$clientIdScheme'")
+                "x509_hash" -> VerifierId::X509Hash
+                else -> error("Unknown clientIdPrefix '$clientIdPrefix'")
             }
         factory(originalClientId, jarSigning)
     }
@@ -556,13 +573,6 @@ private fun verifierConfig(environment: Environment, clock: Clock, resourceLoade
         environment.getProperty("verifier.response.mode", ResponseModeOption::class.java)
             ?: ResponseModeOption.DirectPostJwt
 
-    val presentationDefinitionEmbedOption =
-        environment.getProperty("verifier.presentationDefinition.embed", EmbedOptionEnum::class.java).let {
-            when (it) {
-                ByReference -> WalletApi.presentationDefinitionByReference(publicUrl)
-                ByValue, null -> EmbedOption.ByValue
-            }
-        }
     val maxAge = environment.getProperty("verifier.maxAge", Duration::class.java) ?: Duration.ofMinutes(5)
 
     val transactionDataHashAlgorithm = environment.getProperty("verifier.transactionData.hashAlgorithm", "sha-256")
@@ -581,7 +591,6 @@ private fun verifierConfig(environment: Environment, clock: Clock, resourceLoade
         verifierId = verifierId,
         requestJarOption = requestJarOption,
         requestUriMethod = requestUriMethod,
-        presentationDefinitionEmbedOption = presentationDefinitionEmbedOption,
         responseUriBuilder = WalletApi.directPost(publicUrl),
         responseModeOption = responseModeOption,
         maxAge = maxAge,
@@ -701,50 +710,41 @@ private fun loadKeystore(keystorePath: String, keystoreType: String, keystorePas
 }
 
 private fun Environment.clientMetaData(): ClientMetaData {
-    val authorizationSignedResponseAlg =
-        getProperty("verifier.clientMetadata.authorizationSignedResponseAlg")
-    val authorizationEncryptedResponseAlg =
-        getProperty("verifier.clientMetadata.authorizationEncryptedResponseAlg")
-    val authorizationEncryptedResponseEnc =
-        getProperty("verifier.clientMetadata.authorizationEncryptedResponseEnc")
+    val responseEncryptionOptionAlgorithm =
+        getProperty("verifier.clientMetadata.responseEncryption.algorithm", JWEAlgorithm.ECDH_ES.name)
 
-    val defaultJarmOption = ParseJarmOptionNimbus(null, JWEAlgorithm.ECDH_ES.name, EncryptionMethod.A256GCM.name)
-    checkNotNull(defaultJarmOption)
+    val responseEncryptionOptionMethod =
+        getProperty("verifier.clientMetadata.responseEncryption.method", EncryptionMethod.A128GCM.name)
 
-    val vpFormats = VpFormats(
-        VpFormat.SdJwtVc(
-            sdJwtAlgorithms = getOptionalList(
-                name = "verifier.clientMetadata.vpFormats.sdJwtVc.sdJwtAlgorithms",
-                filter = { it.isNotBlank() },
-            )?.distinct()?.map { JWSAlgorithm.parse(it) } ?: nonEmptyListOf(JWSAlgorithm.ES256),
+    val vpFormatsSupportedSupported = run {
+        val sdJwtVc =
+            if (getProperty<Boolean>("verifier.clientMetadata.vpFormats.sdJwtVc.enabled") ?: true) {
+                val sdJwtAlgorithms = getOptionalList(
+                    name = "verifier.clientMetadata.vpFormats.sdJwtVc.sdJwtAlgorithms",
+                    filter = { it.isNotBlank() },
+                )?.map(JWSAlgorithm::parse)
 
-            kbJwtAlgorithms = getOptionalList(
-                name = "verifier.clientMetadata.vpFormats.sdJwtVc.kbJwtAlgorithms",
-                filter = { it.isNotBlank() },
-            )?.distinct()?.map { JWSAlgorithm.parse(it) } ?: nonEmptyListOf(JWSAlgorithm.ES256),
-        ),
+                val kbJwtAlgorithms = getOptionalList(
+                    name = "verifier.clientMetadata.vpFormats.sdJwtVc.kbJwtAlgorithms",
+                    filter = { it.isNotBlank() },
+                )?.map(JWSAlgorithm::parse)
 
-        VpFormat.MsoMdoc(
-            algorithms = getOptionalList(
-                name = "verifier.clientMetadata.vpFormats.msoMdoc.algorithms",
-                filter = { it.isNotBlank() },
-            )?.distinct()?.map { JWSAlgorithm.parse(it) } ?: nonEmptyListOf(JWSAlgorithm.ES256),
-        ),
-    )
+                VpFormatsSupported.SdJwtVc(sdJwtAlgorithms = sdJwtAlgorithms, kbJwtAlgorithms = kbJwtAlgorithms)
+            } else null
+        val msoMdoc =
+            if (getProperty<Boolean>("verifier.clientMetadata.vpFormats.msoMdoc.enabled") ?: true) {
+                VpFormatsSupported.MsoMdoc(issuerAuthAlgorithms = null, deviceAuthAlgorithms = null)
+            } else null
+
+        VpFormatsSupported(sdJwtVc, msoMdoc)
+    }
 
     return ClientMetaData(
-        idTokenSignedResponseAlg = JWSAlgorithm.RS256.name,
-        idTokenEncryptedResponseAlg = JWEAlgorithm.RSA_OAEP_256.name,
-        idTokenEncryptedResponseEnc = EncryptionMethod.A128CBC_HS256.name,
-        subjectSyntaxTypesSupported = listOf(
-            "urn:ietf:params:oauth:jwk-thumbprint",
+        responseEncryptionOption = ResponseEncryptionOption(
+            algorithm = JWEAlgorithm.parse(responseEncryptionOptionAlgorithm),
+            encryptionMethod = EncryptionMethod.parse(responseEncryptionOptionMethod),
         ),
-        jarmOption = ParseJarmOptionNimbus.invoke(
-            authorizationSignedResponseAlg,
-            authorizationEncryptedResponseAlg,
-            authorizationEncryptedResponseEnc,
-        ) ?: defaultJarmOption,
-        vpFormats = vpFormats,
+        vpFormatsSupported = vpFormatsSupportedSupported,
     )
 }
 
@@ -838,6 +838,7 @@ private fun createHttpClient(
             }
         }
     }
+
 data class HttpProxy(
     val url: Url,
     val username: String? = null,
@@ -860,9 +861,15 @@ private enum class TypeMetadataPolicyEnum {
 @ConfigurationProperties("verifier.validation.sd-jwt-vc.type-metadata.resolution")
 internal data class TypeMetadataResolutionProperties(
     val vcts: List<VctProperties> = emptyList(),
+    val integrity: IntegrityProperties = IntegrityProperties(),
 ) {
     data class VctProperties(
         val vct: String,
         val url: String,
+    )
+
+    data class IntegrityProperties(
+        val enabled: Boolean = false,
+        val allowedAlgorithms: Set<IntegrityAlgorithm> = IntegrityAlgorithm.entries.toSet(),
     )
 }

@@ -13,22 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package eu.europa.ec.eudi.verifier.endpoint.port.out.lotl
-
-import arrow.core.Either
-import eu.europa.ec.eudi.verifier.endpoint.domain.TrustedListConfig
-import java.security.cert.X509Certificate
+package eu.europa.ec.eudi.verifier.endpoint.domain
 
 /**
- * Interface for fetching LOTL certificates
+ * [OAuth 2.0 Authorization Framework](https://www.rfc-editor.org/rfc/rfc6749.html)
  */
-fun interface FetchLOTLCertificates {
-    /**
-     * Fetch certificates from a LOTL URL
-     * @param trustedListConfig Configuration for the trusted list
-     * @return Result containing a list of X509 certificates or an exception
-     */
-    suspend operator fun invoke(
-        trustedListConfig: TrustedListConfig,
-    ): Either<Throwable, List<X509Certificate>>
+object RFC6749 {
+
+    const val CLIENT_ID: String = "client_id"
+    const val STATE: String = "state"
+    const val ERROR: String = "error"
+    const val ERROR_DESCRIPTION: String = "error_description"
+
+    const val RESPONSE_MODE: String = "response_mode"
 }

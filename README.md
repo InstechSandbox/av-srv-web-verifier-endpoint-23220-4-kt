@@ -20,7 +20,7 @@ the [EUDI Wallet Reference Implementation project description](https://github.co
  
 ## Overview
 
-This is a Web application (Backend Restful service) that acts as a Verifier/RP trusted end-point that implements [OpenId4VP (draft 24)](https://openid.net/specs/openid-4-verifiable-presentations-1_0-24.html) protocol. 
+This is a Web application (Backend Restful service) that acts as a Verifier/RP trusted end-point that implements [OpenId4VP (1.0)](https://openid.net/specs/openid-4-verifiable-presentations-1_0-final.html) protocol. 
 This backend service is accompanied by a Web UI application implemented [here](https://github.com/eu-digital-identity-wallet/eudi-web-verifier). 
 
 See section [Run all verifier components together](#run-all-verifier-components-together) on how to boot both applications together.
@@ -31,13 +31,12 @@ Application exposes two APIs
 
 The Verifier API, supports two operations:
 * [Initialize Transaction](src/main/kotlin/eu/europa/ec/eudi/verifier/endpoint/port/input/InitTransaction.kt), where Verifier may define whether it wants to request a SIOP or OpenID4VP or combined request
-* [Get Wallet response](src/main/kotlin/eu/europa/ec/eudi/verifier/endpoint/port/input/GetWalletResponse.kt), where Verifier receives depending on the request an `id_token`, `vp_token`, or an error  
+* [Get Wallet response](src/main/kotlin/eu/europa/ec/eudi/verifier/endpoint/port/input/GetWalletResponse.kt), where Verifier receives a `vp_token`, or an error  
 
 An Open API v3 specification of these operations is available [here](src/main/resources/public/openapi.json).
 
 The Wallet API, provides the following main operations
 * [Get Request Object](src/main/kotlin/eu/europa/ec/eudi/verifier/endpoint/port/input/RetrieveRequestObject.kt) according JWT Secured Authorization Request
-* [Get Presentation Definition](src/main/kotlin/eu/europa/ec/eudi/verifier/endpoint/port/input/GetPresentationDefinition.kt) according to OpenId4VP in case of using `presentation_definition_uri`
 * [Direct Post](src/main/kotlin/eu/europa/ec/eudi/verifier/endpoint/port/input/PostWalletResponse.kt) according to OpenID4VP `direct_post`
 
 Please note that 
@@ -154,11 +153,6 @@ sequenceDiagram
     
     W->>W: Parse authorization request
     
-    opt
-        W->>+VE: Get presentation definition 
-        VE-->>-W: presentation_definition
-    end
-    
     W->>W: Prepare response     
     
     W->>+VE: Post vp_token response 
@@ -202,12 +196,7 @@ sequenceDiagram
     VE-->>-W: authorization_request
     
     W->>W: Parse authorization request
-    
-    opt
-        W->>+VE: Get presentation definition 
-        VE-->>-W: presentation_definition
-    end
-    
+        
     W->>W: Prepare response     
     
     W->>+VE: Post vp_token response 
@@ -247,15 +236,11 @@ This identifier is used in the [WalletApi](src/main/kotlin/eu/europa/ec/eudi/ver
 - _Actor_: [Verifier](src/main/kotlin/eu/europa/ec/eudi/verifier/endpoint/adapter/input/web/VerifierApi.kt)
 
 An endpoint to control the content of the authorization request that will be prepared from the verifier backend service. Payload of this request is a json object with the following acceptable attributes:
-- `type`: The type of the response to the authorization request. Allowed values are one of: `id_token`, `vp_token` or `vp_token id_token`.
-- `id_token_type`: In case type is `id_token` controls the type of id_token that will be requested from wallet. Allowed values are one of `subject_signed_id_token` or `attester_signed_id_token`. 
-- `presentation_definition`: A json object depicting the presentation definition to be included in the OpenId4VP authorization request in case `type` is 'vp_token', or 'vp_token id_token'. 
-- `dcql_query`: A json object depicting the query, expressed using DCQL, to be included in the OpenId4VP authorization request in case `type` is 'vp_token', or 'vp_token id_token'. 
+- `dcql_query`: A json object depicting the query, expressed using DCQL, to be included in the OpenId4VP authorization request.
 - `nonce`: Nonce value to be included in the OpenId4VP authorization request.
 - `response_mode`: Controls the `response_mode` attribute of the OpenId4VP authorization request. Allowed values are one of `direct_post` or `direct_post.jwt`.  
 - `jar_mode`: Controls the way the generated authorization request will be passed. If 'by_value' the request will be passed inline to the wallet upon request, if `by_reference` a `request_uri` url will be returned.
 - `request_uri_method`: Optional. When `post`, `request_uri_method` for the Transaction is `post`, when `get` `request_uri_method` for the Transaction is `get`. Applicable only when `jar_mode` is `by_reference`. If omitted, defaults to `VERIFIER_REQUESTJWT_REQUESTURIMETHOD`  
-- `presentation_definition_mode`: Controls how the presentation definition will be embedded in the request. If 'by_value' it will be embedded inline, if `by_reference` a `presentation_definition_uri` url will be embedded in the request.
 - `wallet_response_redirect_uri_template`: If provided will be used to construct the response to wallet, when it posts its response to the authorization request.   
 - `issuer_chain`: If provided, a PEM encoded X509 Certificate chain (including start and end markers) of a Verifiable Credential Issuer trusted during this Transaction.
 - `authorization_request_scheme`: If provided, it will be used as the scheme part of the URI contained inside the QR code
@@ -268,54 +253,8 @@ This endpoint can produce either JSON or a QR code depending on the Accept heade
 
 **Usage:**
 
-Using Presentation Exchange:
-
 ```bash
-curl -X POST -H "Content-type: application/json" -d '{
-  "type": "vp_token",  
-  "presentation_definition": {
-        "id": "32f54163-7166-48f1-93d8-ff217bdb0653",
-        "input_descriptors": [
-            {
-                "constraints": {
-                    "fields": [
-                        {
-                            "intent_to_retain": false,
-                            "path": [
-                                "$['\''eu.europa.ec.eudi.pid.1'\'']['\''family_name'\'']"
-                            ]
-                        }
-                    ]
-                },
-                "id": "eu.europa.ec.eudi.pid.1",
-                "format": {
-                  "mso_mdoc": {
-                    "alg": [
-                      "ES256",
-                      "ES384",
-                      "ES512",
-                      "EdDSA"
-                    ]
-                  }
-                },
-                "name": "EUDI PID",
-                "purpose": "We need to verify your identity"
-            }
-        ]
-  },
-  "dcql_query": null,
-  "nonce": "nonce",
-  "jar_mode": "by_reference",
-  "request_uri_method": "post",
-  "issuer_chain": "-----BEGIN CERTIFICATE-----\nMIIDHTCCAqOgAwIBAgIUVqjgtJqf4hUYJkqdYzi+0xwhwFYwCgYIKoZIzj0EAwMw\nXDEeMBwGA1UEAwwVUElEIElzc3VlciBDQSAtIFVUIDAxMS0wKwYDVQQKDCRFVURJ\nIFdhbGxldCBSZWZlcmVuY2UgSW1wbGVtZW50YXRpb24xCzAJBgNVBAYTAlVUMB4X\nDTIzMDkwMTE4MzQxN1oXDTMyMTEyNzE4MzQxNlowXDEeMBwGA1UEAwwVUElEIElz\nc3VlciBDQSAtIFVUIDAxMS0wKwYDVQQKDCRFVURJIFdhbGxldCBSZWZlcmVuY2Ug\nSW1wbGVtZW50YXRpb24xCzAJBgNVBAYTAlVUMHYwEAYHKoZIzj0CAQYFK4EEACID\nYgAEFg5Shfsxp5R/UFIEKS3L27dwnFhnjSgUh2btKOQEnfb3doyeqMAvBtUMlClh\nsF3uefKinCw08NB31rwC+dtj6X/LE3n2C9jROIUN8PrnlLS5Qs4Rs4ZU5OIgztoa\nO8G9o4IBJDCCASAwEgYDVR0TAQH/BAgwBgEB/wIBADAfBgNVHSMEGDAWgBSzbLiR\nFxzXpBpmMYdC4YvAQMyVGzAWBgNVHSUBAf8EDDAKBggrgQICAAABBzBDBgNVHR8E\nPDA6MDigNqA0hjJodHRwczovL3ByZXByb2QucGtpLmV1ZGl3LmRldi9jcmwvcGlk\nX0NBX1VUXzAxLmNybDAdBgNVHQ4EFgQUs2y4kRcc16QaZjGHQuGLwEDMlRswDgYD\nVR0PAQH/BAQDAgEGMF0GA1UdEgRWMFSGUmh0dHBzOi8vZ2l0aHViLmNvbS9ldS1k\naWdpdGFsLWlkZW50aXR5LXdhbGxldC9hcmNoaXRlY3R1cmUtYW5kLXJlZmVyZW5j\nZS1mcmFtZXdvcmswCgYIKoZIzj0EAwMDaAAwZQIwaXUA3j++xl/tdD76tXEWCikf\nM1CaRz4vzBC7NS0wCdItKiz6HZeV8EPtNCnsfKpNAjEAqrdeKDnr5Kwf8BA7tATe\nhxNlOV4Hnc10XO1XULtigCwb49RpkqlS2Hul+DpqObUs\n-----END CERTIFICATE-----"
-}' 'http://localhost:8080/ui/presentations'
-```
-
-Using DCQL:
-
-```bash
-curl -X POST -H "Content-type: application/json" -d '{
-  "type": "vp_token",  
+curl -X POST -H "Content-type: application/json" -d '{  
   "dcql_query": {
     "credentials": [
       {
@@ -326,8 +265,7 @@ curl -X POST -H "Content-type: application/json" -d '{
         },
         "claims": [
           {
-            "namespace": "eu.europa.ec.eudi.pid.1",
-            "claim_name": "family_name"
+            "path": ["eu.europa.ec.eudi.pid.1", "family_name"],
           }
         ]
       }
@@ -365,38 +303,32 @@ To generate a qr code use the following example:
 
 ```bash
 curl -X POST -H "Content-type: application/json" -H "Accept: image/png" -d '{
-  "type": "vp_token",  
-  "presentation_definition": {
+  "dcql_query": {
+    "credentials": [
+      {
         "id": "32f54163-7166-48f1-93d8-ff217bdb0653",
-        "input_descriptors": [
-            {
-                "constraints": {
-                    "fields": [
-                        {
-                            "intent_to_retain": false,
-                            "path": [
-                                "$['\''eu.europa.ec.eudi.pid.1'\'']['\''family_name'\'']"
-                            ]
-                        }
-                    ]
-                },
-                "id": "eu.europa.ec.eudi.pid.1",
-                "format": {
-                  "mso_mdoc": {
-                    "alg": [
-                      "ES256",
-                      "ES384",
-                      "ES512",
-                      "EdDSA"
-                    ]
-                  }
-                },
-                "name": "EUDI PID",
-                "purpose": "We need to verify your identity"
-            }
+        "format": "mso_mdoc",
+        "meta": {
+          "doctype_value": "eu.europa.ec.eudi.pid.1"
+        },
+        "claims": [
+          {
+            "path": ["eu.europa.ec.eudi.pid.1", "family_name"],
+          }
         ]
+      }
+    ],
+    "credential_sets": [
+      {
+        "options": [
+          [
+            "32f54163-7166-48f1-93d8-ff217bdb0653"
+          ]
+        ],
+        "purpose": "We need to verify your identity"
+      }
+    ]
   },
-  "dcql_query": null,
   "nonce": "nonce",
   "jar_mode": "by_reference",
   "request_uri_method": "post",
@@ -411,7 +343,7 @@ You can also try it out in [Swagger UI](http://localhost:8080/swagger-ui#/verifi
 An endpoint to be used by wallet when the OpenId4VP authorization request is passed to wallet by reference as a request_uri.
 In essence this is the endpoint that responds to the url included as the `request_uri` attribute of the [Initialize transaction endpoint](#initialize-transaction-endpoint)'s response.
 
-This endpoint also support `request_uri_method` `post`. More details can be found [here](https://openid.net/specs/openid-4-verifiable-presentations-1_0-23.html#name-request-uri-method-post).
+This endpoint also support `request_uri_method` `post`. More details can be found [here](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#name-request-uri-method-post).
 
 #### request_uri_method: get
 
@@ -445,23 +377,6 @@ curl -X POST https://localhost:8080/wallet/request.jwt/5N6E7VZsmwXOGLz1Xlfi96Moy
 ```
 **Returns:** The authorization request payload as a signed or, signed and encrypted JWT.
 
-### Get presentation definition
-
-- _Method_: GET
-- _URL_: http://localhost:8080/wallet/pd/{requestId}
-- _Parameters_
-    - `requestId`: The identifier of the authorization request
-- _Actor_: [Wallet](src/main/kotlin/eu/europa/ec/eudi/verifier/endpoint/adapter/input/web/WalletApi.kt)
-
-An endpoint to be used by wallet when the presentation definition of the OpenId4VP authorization request is not embedded inline in the request but by reference as a `presentation_definition_uri`.
-
-**Usage:**
-```bash
-curl https://localhost:8080/wallet/pd/5N6E7VZsmwXOGLz1Xlfi96MoyZVC3FZxwdAuJ26DnGcan-vYs-VAKErioQ58BWEsKlVw2_X49jpZHyp0Mk9nKw
-```
-
-**Returns:** The presentation definition of the authorization request as JSON.
-
 ### Send wallet response
 
 - _Method_: POST
@@ -474,10 +389,8 @@ accept 2 type of payloads:
 _**response_mode = direct_post**_
 
 A form post (application/x-www-form-urlencoded encoding) with the following form parameters:
-- `state`: The state claim included in the authorization request JWT. Its value matches the authorization request identifier.  
-- `id_token`: The requested id_token if authorization request 'response_type' attribute contains `id_token`.
-- `vp_token`: The requested vp_token if authorization request 'response_type' attribute contains `vp_token`.
-- `presentation_submission`: The presentation submission accompanying the vp_token in case 'response_type' attribute of authorization request contains `vp_token` (applicable only when using Presentation Exchange).
+- `state`: The state claim included in the authorization request JWT. Its value matches the authorization request identifier.
+- `vp_token`: The requested vp_token.
 
 _**response_mode = direct_post.jwt**_
 
@@ -487,39 +400,13 @@ A form post (application/x-www-form-urlencoded encoding) with the following form
 
 **Usage:**
 
-Using Presentation Exchange:
-
 ```bash
 STATE=IsoY9VwZXJ8GS7zg4CEHsCNu-5LpAiPGjbwYssZ2nh3tnkhytNw2mNZLSFsKOwdG2Ww33hX6PUp6P9xImdS-qA
 curl -v -X POST 'http://localhost:8080/wallet/direct_post' \
   -H "Content-type: application/x-www-form-urlencoded" \
   -H "Accept: application/json" \
   --data-urlencode "state=$STATE" \
-  --data-urlencode 'vp_token={"id": "123456"}' \
-  --data-urlencode presentation_submission@- << EOF
-{
-  "id": "a30e3b91-fb77-4d22-95fa-871689c322e2",
-  "definition_id": "32f54163-7166-48f1-93d8-ff217bdb0653",
-  "descriptor_map": [
-    {
-      "id": "employment_input",
-      "format": "jwt_vc",
-      "path": "$.verifiableCredential[0]"
-    }
-  ]
-}
-EOF
-```
-
-Using DCQL:
-
-```bash
-STATE=IsoY9VwZXJ8GS7zg4CEHsCNu-5LpAiPGjbwYssZ2nh3tnkhytNw2mNZLSFsKOwdG2Ww33hX6PUp6P9xImdS-qA
-curl -v -X POST 'http://localhost:8080/wallet/direct_post' \
-  -H "Content-type: application/x-www-form-urlencoded" \
-  -H "Accept: application/json" \
-  --data-urlencode "state=$STATE" \
-  --data-urlencode 'vp_token={"32f54163-7166-48f1-93d8-ff217bdb0653": {"id": "123456"}}'
+  --data-urlencode 'vp_token={"32f54163-7166-48f1-93d8-ff217bdb0653": [{"id": "123456"}]}'
 ```
 
 **Returns:**
@@ -645,12 +532,12 @@ Description: Port for the HTTP listener of the Verifier Endpoint application
 Default value: `8080`
 
 Variable: `VERIFIER_ORIGINALCLIENTID`  
-Description: Client Id of the Verifier Endpoint application **without** the Client Id Scheme prefix   
+Description: Client Id of the Verifier Endpoint application **without** the Client Id prefix   
 Default value: `Verifier`
 
-Variable: `VERIFIER_CLIENTIDSCHEME`  
-Description: Client Id Scheme used by the Verifier Endpoint application  
-Possible values: `pre-registered`, `x509_san_dns`, `x509_san_uri`  
+Variable: `VERIFIER_CLIENTIDPREFIX`  
+Description: Client Id Prefix used by the Verifier Endpoint application  
+Possible values: `pre-registered`, `x509_san_dns`, `x509_hash`  
 Default value: `pre-registered`
 
 Variable: `VERIFIER_JAR_SIGNING_ALGORITHM`  
@@ -681,11 +568,6 @@ Description: Default `request_uri_method` to use for a Presentation when one is 
 Possible values: `Get`, `Post`  
 Default value: `Get`  
 
-Variable: `VERIFIER_PRESENTATIONDEFINITION_EMBED`  
-Description: How Presentation Definitions will be provided in Authorization Requests    
-Possible values: `ByValue`, `ByReference`  
-Default value: `ByValue`
-
 Variable: `VERIFIER_RESPONSE_MODE`  
 Description: How Authorization Responses are expected    
 Possible values: `DirectPost`, `DirectPostJwt`  
@@ -708,22 +590,25 @@ Description: The Authorization Request Scheme to be used for the QR code generat
 Example: `eudi-openid4vp`  
 Default value: `eudi-openid4vp`
 
-Variable: `VERIFIER_CLIENTMETADATA_AUTHORIZATIONSIGNEDRESPONSEALG`  
-Description: Accept only Authorization Responses that are _signed_ using this algorithm  
-Possible values: Any `Algorithm Name` of an IANA registered asymmetric signature algorithm (i.e. Usage is `alg`):
-https://www.iana.org/assignments/jose/jose.xhtml#web-signature-encryption-algorithms
+Variable: `VERIFIER_ALLOWEDREDIRECTURISCHEMES`  
+Description: Comma-separated list of schemes allowed to be used in the `wallet_response_redirect_uri_template`. 
+When Verifier Endpoint is used by a native mobile application, `wallet_response_redirect_uri_template` might contain a URI with a custom scheme (i.e., a deep-link). 
+In such cases the custom scheme must be added to `VERIFIER_ALLOWEDREDIRECTURISCHEMES`.  
+Default value: `https`
 
-Variable: `VERIFIER_CLIENTMETADATA_AUTHORIZATIONENCRYPTEDRESPONSEALG`  
-Description: Accept only Authorization Responses that are _encrypted_ using this algorithm  
-Possible values: Any `Algorithm Name` of an IANA registered asymmetric encryption algorithm (i.e. Usage is `alg`):
-https://www.iana.org/assignments/jose/jose.xhtml#web-signature-encryption-algorithms  
+Variable: `VERIFIER_CLIENTMETADATA_RESPONSEENCRYPTION_ALGORITHM`  
+Description: Algorithm that verifier is advertising and supports for authorization response encryption    
+Possible values: `ECDH-ES`, `ECDH-ES+A128KW`, `ECDH-ES+A192KW`, `ECDH-ES+A256KW`  
 Default value: `ECDH-ES`
 
-Variable: `VERIFIER_CLIENTMETADATA_AUTHORIZATIONENCRYPTEDRESPONSEENC`  
-Description: Accept only Authorization Responses that are _encrypted_ using this method  
-Possible values: Any `Algorithm Name` of an IANA registered asymmetric encryption method (i.e. Usage is `enc`):
-https://www.iana.org/assignments/jose/jose.xhtml#web-signature-encryption-algorithms    
-Default value: `A128CBC-HS256`
+Variable: `VERIFIER_CLIENTMETADATA_RESPONSEENCRYPTION_METHOD`  
+Description: Method that verifier is advertising and supports for authorization response encryption   
+Possible values: `A128CBC-HS256`, `A192CBC-HS384`, `A256CBC-HS512`, `A128GCM`, `A192GCM`, `256GCM`, `XC20P`  
+Default value: `A128GCM`  
+
+Variable: `VERIFIER_CLIENTMETADATA_VPFORMATS_SDJWTVC_ENABLED`  
+Description: Enables support for SD-JWT VC   
+Default value: `true`  
 
 Variable: `VERIFIER_CLIENTMETADATA_VPFORMATS_SDJWTVC_SDJWTALGORITHMS`  
 Description: Comma separated list of signature algorithms the Issuer Signed JWT of an SD-JWT VC can be signed with     
@@ -737,11 +622,9 @@ Possible values: Any `Algorithm Name` of an IANA registered asymmetric signature
 https://www.iana.org/assignments/jose/jose.xhtml#web-signature-encryption-algorithms
 Default value: `ES256`
 
-Variable: `VERIFIER_CLIENTMETADATA_VPFORMATS_MSOMDOC_ALGORITHMS`  
-Description: Comma separated list of signature algorithms the `COSESign1` of an `IssuerSigned` in `MDoc` can be signed with        
-Possible values: Any `Algorithm Name` of an IANA registered asymmetric signature algorithm (i.e. Usage is `alg`):
-https://www.iana.org/assignments/jose/jose.xhtml#web-signature-encryption-algorithms
-Default value: `ES256`
+Variable: `VERIFIER_CLIENTMETADATA_VPFORMATS_MSOMDOC_ENABLED`  
+Description: Enable support for MSO MDoc    
+Default value: `true`  
 
 Variable: `VERIFIER_VALIDATION_SDJWTVC_STATUSCHECK_ENABLED`  
 Description: Enables status check validation for sd-jwt-vc attestations shared.  
@@ -878,7 +761,7 @@ Default value: `not_used`
 
 Variable: `VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_POLICY_REQUIREDFOR`  
 Description: Comma separated list of VCTs for which Type Metadata are required for. Required when `VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_POLICY` is set to `required_for`  
-Example: `urn:eudi:pid:1`
+Example: `urn:eudi:pid:1`  
 
 #### SD-JWT-VC Type Metadata resolution
 
@@ -900,6 +783,19 @@ Default value: `PT1H`
 Variable: `VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_RESOLUTION_CACHE_MAXENTRIES`  
 Description: Cache maximum entries for resolved Type Metadata  
 Default value: `10`  
+
+Variable: `VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_RESOLUTION_INTEGRITY_ENABLED`  
+Description: Enables sub-resource integrity validation for SD-JWT VC Type Metadata and JSON schemas  
+Default value: `false`
+
+Variable: `VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_RESOLUTION_INTEGRITY_ALLOWEDALGORITHMS`    
+Description: Comma-separated list of allowed sub-resource integrity hash algorithms  
+Allowed values: `sha256`, `sha384`, `sha512`  
+Default value: `sha256,sha384,sha512`  
+
+Variable: `VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_JSONSCHEMA_VALIDATION_ENABLED`  
+Description: Whether Json Schema validation should be enabled or not    
+Default value: `true`   
 
 ## How to contribute
 
