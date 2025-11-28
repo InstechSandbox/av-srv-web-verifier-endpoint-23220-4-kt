@@ -153,17 +153,56 @@ class WalletApi(
         const val WALLET_RESPONSE_PATH = "/wallet/direct_post/{requestId}"
 
         /**
+         * Regex pattern to match iOS wallet vp_token format: vp_token[key]
+         */
+        private val VP_TOKEN_IOS_PATTERN = "^vp_token\\[([^\\[\\]]+)]$".toRegex()
+
+        /**
          * Extracts from the request the [RequestId]
          */
         private fun ServerRequest.requestId() = RequestId(pathVariable("requestId"))
 
+        /**
+         * Extracts vp_token from form data, supporting both iOS and Android formats.
+         *
+         * iOS format: vp_token[key]=value (multiple entries possible)
+         * Android format: vp_token={"key": "value", ...}
+         *
+         * @return JsonObject if vp_token found in any format, null otherwise
+         */
+        private fun MultiValueMap<String, String>.extractVpToken(): JsonObject? {
+            val iosEntries = keys
+                .mapNotNull { key ->
+                    VP_TOKEN_IOS_PATTERN.matchEntire(key)?.let {
+                        it.groupValues[1] to key
+                    }
+                }
+                .mapNotNull { (innerKey, fullKey) ->
+                    getFirst(fullKey)?.let { innerKey to it }
+                }
+
+            if (iosEntries.isNotEmpty()) {
+                return buildJsonObject {
+                    iosEntries.forEach { (key, value) ->
+                        put(key, buildJsonArray { add(value) })
+                    }
+                }
+            }
+
+            return getFirst("vp_token")?.let { jsonString ->
+                try {
+                    Json.decodeFromString<JsonObject>(jsonString)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        }
+
         private fun MultiValueMap<String, String>.walletResponse(): AuthorisationResponse {
             fun directPost(): AuthorisationResponse.DirectPost {
-                fun String.toJsonObject(): JsonObject = Json.decodeFromString<JsonObject>(this)
-
                 return AuthorisationResponseTO(
                     state = getFirst("state"),
-                    vpToken = getFirst("vp_token")?.toJsonObject(),
+                    vpToken = extractVpToken(),
                     error = getFirst("error"),
                     errorDescription = getFirst("error_description"),
                 ).run { AuthorisationResponse.DirectPost(this) }
