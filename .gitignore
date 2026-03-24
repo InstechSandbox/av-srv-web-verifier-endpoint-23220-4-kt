@@ -41,5 +41,6 @@ out/
 
 # Local runtime artifacts
 .DS_Store
+.gradle-validate/
 docker/haproxy.pem
 docker/local/certs/
