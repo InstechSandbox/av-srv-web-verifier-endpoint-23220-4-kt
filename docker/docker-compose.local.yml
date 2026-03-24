@@ -1,0 +1,40 @@
+services:
+  verifier:
+    build:
+      context: ..
+      dockerfile: Dockerfile.local
+    image: verifier-backend:local
+    container_name: verifier-backend
+    ports:
+      - "8080:8080"
+    environment:
+      VERIFIER_PUBLICURL: ${VERIFIER_PUBLIC_URL:-https://localhost}
+      VERIFIER_REQUESTJWT_EMBED: ByReference
+      VERIFIER_REQUESTJWT_REQUESTURIMETHOD: Get
+      VERIFIER_RESPONSE_MODE: DirectPost
+      VERIFIER_AUTHORIZATIONREQUESTSCHEME: haip-vp
+
+  verifier-ui:
+    build:
+      context: ../../eudi-web-verifier
+      dockerfile: Dockerfile
+    image: eudi-web-verifier:local
+    container_name: verifier-ui
+    depends_on:
+      - verifier
+    ports:
+      - "4300:4300"
+    environment:
+      HOST_API: ${VERIFIER_PUBLIC_URL:-https://localhost}
+
+  haproxy:
+    image: haproxy:2.7.2
+    container_name: verifier-haproxy
+    depends_on:
+      - verifier
+      - verifier-ui
+    ports:
+      - "443:443"
+    volumes:
+      - ./haproxy.conf:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./local/certs/haproxy-local.pem:/etc/ssl/certs/mysite.pem:ro

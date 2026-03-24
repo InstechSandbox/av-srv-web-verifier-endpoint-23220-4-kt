@@ -1,0 +1,7 @@
+.git
+.github
+.gradle
+.kotlin
+bin
+build
+docker/local/certs

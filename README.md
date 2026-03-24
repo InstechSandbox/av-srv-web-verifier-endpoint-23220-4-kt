@@ -93,6 +93,68 @@ cd docker
 docker-compose down
 ```
 
+### Run workspace sources locally with Docker
+
+If you want a repeatable local deployment that uses the verifier backend repository in this workspace together
+with the sibling [eudi-web-verifier](https://github.com/eu-digital-identity-wallet/eudi-web-verifier) repository,
+use the local compose flow instead of the published images:
+
+```bash
+./scripts/start-local-verifier.sh
+```
+
+This workflow:
+- builds the backend image from the current repository via `Dockerfile.local`
+- builds the UI image from `../eudi-web-verifier`
+- generates a self-signed certificate for `https://localhost` and the detected LAN IP
+- starts backend, UI, and HAProxy with Docker Compose on a public URL that defaults to the detected LAN IP
+
+To stop it:
+
+```bash
+./scripts/stop-local-verifier.sh
+```
+
+By default the startup script uses your Mac's LAN IP as the verifier base URL so phones on the same Wi-Fi can reach it. If another local service
+needs to deep link to the verifier, point it at:
+
+```text
+https://<your-lan-ip>/ui/presentations/
+```
+
+To force a specific host, run:
+
+```bash
+VERIFIER_PUBLIC_HOST=192.168.0.110 ./scripts/start-local-verifier.sh
+```
+
+### Test With Emulator Or Phone
+
+You do not need a separate verifier deployment for emulator testing. The emulator and a physical phone can both talk to the same verifier host as long as the verifier keeps a stable public URL such as:
+
+```text
+https://192.168.0.110
+```
+
+Use a physical phone when you want to test the real QR-camera path end to end. The phone camera scans the verifier UI QR code directly, so that part cannot be reproduced faithfully on the Android emulator.
+
+Use the emulator when you want to test the same wallet flow without reinstall churn or camera scanning. The wallet can consume the exact same OpenID4VP deep link that the phone would receive. Generate a fresh one-shot deep link and print an `adb` command with:
+
+```bash
+./scripts/generate-emulator-deeplink.sh
+```
+
+To inject the generated deep link into the running emulator immediately:
+
+```bash
+./scripts/generate-emulator-deeplink.sh --run
+```
+
+Notes:
+- The generated `request_uri` is one-shot. Generate a new deep link for each retry.
+- If you regenerate the verifier certificate, update the wallet pinned certificate in `eudi-app-android-wallet-ui/network-logic/src/main/res/raw/backend_cert.pem` and reinstall the wallet build.
+- If another local service triggers the verifier, point it at `https://<your-lan-ip>/ui/presentations/` instead of `https://localhost/...`.
+
 The 'verifier' service can be configured by setting its configuration properties described [here](#configuration) by setting them as environment 
 variables of the service in [docker-compose.yaml](docker/docker-compose.yaml)  
 

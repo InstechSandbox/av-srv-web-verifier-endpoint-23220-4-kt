@@ -421,7 +421,7 @@ private fun createAuthorizationRequestUri(
 ): URI =
     Uri.Builder().apply {
         scheme(scheme)
-        authority("")
+        authority(authorizationRequestAuthority(authorizationRequest))
         appendQueryParameter(RFC6749.CLIENT_ID, authorizationRequest.clientId)
         authorizationRequest.request?.let { appendQueryParameter(RFC9101.REQUEST, it) }
         authorizationRequest.requestUri?.let { appendQueryParameter(RFC9101.REQUEST_URI, it) }
@@ -433,3 +433,11 @@ private fun createAuthorizationRequestUri(
             appendQueryParameter(OpenId4VPSpec.REQUEST_URI_METHOD, requestUriMethod)
         }
     }.build().toURI()
+
+private fun authorizationRequestAuthority(
+    authorizationRequest: InitTransactionResponse.JwtSecuredAuthorizationRequestTO,
+): String =
+    authorizationRequest.requestUri
+        ?.let { runCatching { URI.create(it).authority }.getOrNull() }
+        ?.takeUnless { it.isNullOrBlank() }
+        ?: authorizationRequest.clientId.toString()
