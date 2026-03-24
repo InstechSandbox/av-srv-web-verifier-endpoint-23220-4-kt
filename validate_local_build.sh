@@ -7,15 +7,38 @@ cd "$repo_dir"
 
 gradle_user_home=${GRADLE_USER_HOME:-$repo_dir/.gradle-validate}
 
-if command -v /usr/libexec/java_home >/dev/null 2>&1; then
-	if java17_home=$(/usr/libexec/java_home -v 17 2>/dev/null); then
-		export JAVA_HOME="$java17_home"
-		export PATH="$JAVA_HOME/bin:$PATH"
-	else
-		printf 'Java 17 is required for verifier backend validation. Install JDK 17 and rerun.\n' >&2
-		exit 2
+find_java17_home() {
+	if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+		version=$($JAVA_HOME/bin/java -version 2>&1 | awk -F '[\".]' '/version/ {print $2; exit}')
+		if [ "$version" = "17" ]; then
+			printf '%s\n' "$JAVA_HOME"
+			return
+		fi
 	fi
-fi
+
+	if command -v /usr/libexec/java_home >/dev/null 2>&1; then
+		if java17_home=$(/usr/libexec/java_home -v 17 2>/dev/null); then
+			printf '%s\n' "$java17_home"
+			return
+		fi
+	fi
+
+	for candidate in \
+		"$HOME/.jdk"/jdk-17*/jdk-17*+*/Contents/Home \
+		"$HOME/.gradle/jdks"/*17*/Contents/Home; do
+		if [ -x "$candidate/bin/java" ]; then
+			printf '%s\n' "$candidate"
+			return
+		fi
+	done
+
+	printf 'Java 17 is required for verifier backend validation. Install JDK 17 and rerun.\n' >&2
+	exit 2
+}
+
+JAVA_HOME=$(find_java17_home)
+export JAVA_HOME
+export PATH="$JAVA_HOME/bin:$PATH"
 
 export GRADLE_USER_HOME="$gradle_user_home"
 
