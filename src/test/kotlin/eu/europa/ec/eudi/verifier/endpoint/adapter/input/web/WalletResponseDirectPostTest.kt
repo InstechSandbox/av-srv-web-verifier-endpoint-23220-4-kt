@@ -27,6 +27,7 @@ import org.springframework.core.annotation.Order
 import org.springframework.test.context.TestPropertySource
 import org.springframework.test.web.reactive.server.WebTestClient
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 
@@ -69,5 +70,19 @@ internal class WalletResponseDirectPostTest {
 
         assertNull(requestObjectJsonResponse.supportedEncryptionMethods())
         assertNull(requestObjectJsonResponse.ecKey(), "jwks must not contain EC key")
+    }
+
+    @Test
+    @Order(value = 2)
+    fun `request object can be retrieved repeatedly for the same transaction`() = runTest {
+        val initTransaction = VerifierApiClient.loadInitTransactionTO("02-dcql.json")
+        val transactionInitialized =
+            assertIs<InitTransactionResponse.JwtSecuredAuthorizationRequestTO>(VerifierApiClient.initTransaction(client, initTransaction))
+
+        val firstResponse = WalletApiClient.getRequestObjectJsonResponse(client, transactionInitialized.requestUri!!)
+        val secondResponse = WalletApiClient.getRequestObjectJsonResponse(client, transactionInitialized.requestUri)
+
+        assertEquals(firstResponse["response_type"], secondResponse["response_type"])
+        assertEquals(firstResponse["state"], secondResponse["state"])
     }
 }

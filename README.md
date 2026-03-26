@@ -128,6 +128,14 @@ To force a specific host, run:
 VERIFIER_PUBLIC_HOST=192.168.0.110 ./scripts/start-local-verifier.sh
 ```
 
+### Validation Smoke Test
+
+The repository includes [validate_local_build.sh](validate_local_build.sh) for local validation.
+
+After the Gradle build succeeds, the smoke phase starts the generated backend jar on a disposable local port, probes `/actuator/health`, and expects a healthy `UP` response before the temporary process is shut down.
+
+If the smoke test fails, the script exits non-zero, prints the temporary runtime log, and tears down the disposable verifier process and any listener left on the smoke-test port.
+
 ### Test With Emulator Or Phone
 
 You do not need a separate verifier deployment for emulator testing. The emulator and a physical phone can both talk to the same verifier host as long as the verifier keeps a stable public URL such as:
@@ -141,14 +149,16 @@ Use a physical phone when you want to test the real QR-camera path end to end. T
 Use the emulator when you want to test the same wallet flow without reinstall churn or camera scanning. The wallet can consume the exact same OpenID4VP deep link that the phone would receive. Generate a fresh one-shot deep link and print an `adb` command with:
 
 ```bash
-./scripts/generate-emulator-deeplink.sh
+./scripts/generate-verifier-deeplink.sh
 ```
 
 To inject the generated deep link into the running emulator immediately:
 
 ```bash
-./scripts/generate-emulator-deeplink.sh --run
+./scripts/generate-verifier-deeplink.sh --run
 ```
+
+If you need to run the deep link manually through `adb shell`, use the printed `adb_shell_command` line from the script output. Do not flatten that into an unquoted `adb shell am start -d ...` command, because the device shell will split the URI on `&` and the wallet will receive a truncated OpenID4VP request.
 
 Notes:
 - The generated `request_uri` is one-shot. Generate a new deep link for each retry.

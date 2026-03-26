@@ -103,23 +103,47 @@ class RetrieveRequestObjectLive(
         method: RetrieveRequestObjectMethod,
     ): Either<RetrieveRequestObjectError, Jwt> =
         either {
-            ensure(presentation is Presentation.Requested) {
+            ensure(
+                presentation is Presentation.Requested || presentation is Presentation.RequestObjectRetrieved,
+            ) {
                 RetrieveRequestObjectError.InvalidState(Presentation.Requested::class, presentation::class)
             }
+
+            val requestedPresentation = when (presentation) {
+                is Presentation.Requested -> presentation
+                is Presentation.RequestObjectRetrieved -> presentation.asRequested(verifierConfig.requestUriMethod)
+                else -> error("Unexpected presentation state ${presentation::class.simpleName}")
+            }
+
+            suspend fun createJar(
+                requestedPresentation: Presentation.Requested,
+                encryptionRequirement: EncryptionRequirement,
+            ): Jwt =
+                createJar(
+                    verifierConfig,
+                    clock,
+                    requestedPresentation,
+                    method.walletNonceOrNull,
+                    encryptionRequirement,
+                ).getOrThrow()
 
             suspend fun updatePresentationAndCreateJar(
                 encryptionRequirement: EncryptionRequirement,
             ): Pair<Presentation.RequestObjectRetrieved, Jwt> {
-                val jar = createJar(
-                    verifierConfig,
-                    clock,
-                    presentation,
-                    method.walletNonceOrNull,
-                    encryptionRequirement,
-                ).getOrThrow()
-                val updatedPresentation = presentation.retrieveRequestObject(clock).getOrThrow()
+                val jar = createJar(requestedPresentation, encryptionRequirement)
+                val updatedPresentation = requestedPresentation.retrieveRequestObject(clock).getOrThrow()
                 storePresentation(updatedPresentation)
                 return updatedPresentation to jar
+            }
+
+            suspend fun recreateJar(
+                encryptionRequirement: EncryptionRequirement,
+            ): Jwt {
+                val jar = createJar(
+                    requestedPresentation,
+                    encryptionRequirement,
+                )
+                return jar
             }
 
             suspend fun log(p: Presentation.RequestObjectRetrieved, jwt: Jwt) {
@@ -127,16 +151,22 @@ class RetrieveRequestObjectLive(
                 publishPresentationEvent(event)
             }
 
-            ensure(method is RetrieveRequestObjectMethod.Get || RequestUriMethod.Post == presentation.requestUriMethod) {
-                RetrieveRequestObjectError.InvalidRequestUriMethod(presentation.requestUriMethod)
+            ensure(method is RetrieveRequestObjectMethod.Get || RequestUriMethod.Post == requestedPresentation.requestUriMethod) {
+                RetrieveRequestObjectError.InvalidRequestUriMethod(requestedPresentation.requestUriMethod)
             }
 
             val walletMetadata = method.walletMetadataOrNull?.let { parseWalletMetadata(it).bind() }
-            val encryptionRequirement = walletMetadata?.validate(presentation)?.bind() ?: EncryptionRequirement.NotRequired
+            val encryptionRequirement = walletMetadata?.validate(requestedPresentation)?.bind() ?: EncryptionRequirement.NotRequired
 
-            val (updatePresentation, jar) = updatePresentationAndCreateJar(encryptionRequirement)
-            log(updatePresentation, jar)
-            jar
+            when (presentation) {
+                is Presentation.Requested -> {
+                    val (updatePresentation, jar) = updatePresentationAndCreateJar(encryptionRequirement)
+                    log(updatePresentation, jar)
+                    jar
+                }
+                is Presentation.RequestObjectRetrieved -> recreateJar(encryptionRequirement)
+                else -> error("Unexpected presentation state ${presentation::class.simpleName}")
+            }
         }.onLeft { error ->
             val cause = when (error) {
                 RetrieveRequestObjectError.PresentationNotFound -> null
@@ -329,6 +359,20 @@ private val VerifierId.clientIdPrefix: String
         is VerifierId.X509SanDns -> OpenId4VPSpec.CLIENT_ID_PREFIX_X509_SAN_DNS
         is VerifierId.X509Hash -> OpenId4VPSpec.CLIENT_ID_PREFIX_X509_HASH
     }
+
+private fun Presentation.RequestObjectRetrieved.asRequested(requestUriMethod: RequestUriMethod): Presentation.Requested =
+    Presentation.Requested(
+        id = id,
+        initiatedAt = initiatedAt,
+        query = query,
+        transactionData = transactionData,
+        requestId = requestId,
+        requestUriMethod = requestUriMethod,
+        nonce = nonce,
+        responseMode = responseMode,
+        getWalletResponseMethod = getWalletResponseMethod,
+        issuerChain = issuerChain,
+    )
 
 private fun ResponseModeOption.name(): String =
     when (this) {

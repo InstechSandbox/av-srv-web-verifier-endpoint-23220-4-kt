@@ -94,13 +94,15 @@ print("adb_args=" + shlex.join(adb_args))
 
 printf '%s\n' "$parsed"
 
+deeplink=$(printf '%s\n' "$parsed" | awk -F= '/^deeplink=/{print substr($0,10)}')
+
+if [ -z "$deeplink" ]; then
+  printf 'Failed to derive deeplink from verifier response\n' >&2
+  exit 1
+fi
+
+printf 'adb_shell_command=%s shell "am start -W -a android.intent.action.VIEW -d '\''%s'\''"\n' "$ADB_BIN" "$deeplink"
+
 if [ "$run_adb" = true ]; then
-  deeplink=$(printf '%s\n' "$parsed" | awk -F= '/^deeplink=/{print substr($0,10)}')
-
-  if [ -z "$deeplink" ]; then
-    printf 'Failed to derive deeplink from verifier response\n' >&2
-    exit 1
-  fi
-
   "$ADB_BIN" shell "am start -W -a android.intent.action.VIEW -d '$deeplink'"
 fi
