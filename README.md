@@ -125,7 +125,7 @@ https://<your-lan-ip>/ui/presentations/
 To force a specific host, run:
 
 ```bash
-VERIFIER_PUBLIC_HOST=192.168.0.110 ./scripts/start-local-verifier.sh
+VERIFIER_PUBLIC_HOST=<your-lan-ip> ./scripts/start-local-verifier.sh
 ```
 
 ### Validation Smoke Test
@@ -141,7 +141,7 @@ If the smoke test fails, the script exits non-zero, prints the temporary runtime
 You do not need a separate verifier deployment for emulator testing. The emulator and a physical phone can both talk to the same verifier host as long as the verifier keeps a stable public URL such as:
 
 ```text
-https://192.168.0.110
+https://<your-lan-ip>
 ```
 
 Use a physical phone when you want to test the real QR-camera path end to end. The phone camera scans the verifier UI QR code directly, so that part cannot be reproduced faithfully on the Android emulator.

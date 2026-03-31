@@ -6,6 +6,27 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 detected_lan_ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)
 
+detect_adb_bin() {
+  for candidate in \
+    "${ADB_BIN:-}" \
+    "${ANDROID_SDK_ROOT:-}/platform-tools/adb" \
+    "${ANDROID_HOME:-}/platform-tools/adb" \
+    "$HOME/Library/Android/sdk/platform-tools/adb"
+  do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+
+  if command -v adb >/dev/null 2>&1; then
+    command -v adb
+    return
+  fi
+
+  printf '%s\n' "$HOME/Library/Android/sdk/platform-tools/adb"
+}
+
 if [ -n "${VERIFIER_PUBLIC_HOST:-}" ]; then
   public_host=$VERIFIER_PUBLIC_HOST
 elif [ -n "$detected_lan_ip" ]; then
@@ -15,8 +36,18 @@ else
 fi
 
 VERIFIER_PUBLIC_URL=${VERIFIER_PUBLIC_URL:-https://$public_host}
-ADB_BIN=${ADB_BIN:-/Users/bg/Library/Android/sdk/platform-tools/adb}
+ADB_BIN=${ADB_BIN:-$(detect_adb_bin)}
+ANDROID_SERIAL=${ANDROID_SERIAL:-}
 run_adb=false
+
+adb_cmd() {
+  if [ -n "$ANDROID_SERIAL" ]; then
+    "$ADB_BIN" -s "$ANDROID_SERIAL" "$@"
+    return
+  fi
+
+  "$ADB_BIN" "$@"
+}
 
 if [ "${1:-}" = "--run" ]; then
   run_adb=true
@@ -101,8 +132,14 @@ if [ -z "$deeplink" ]; then
   exit 1
 fi
 
-printf 'adb_shell_command=%s shell "am start -W -a android.intent.action.VIEW -d '\''%s'\''"\n' "$ADB_BIN" "$deeplink"
+if [ -n "$ANDROID_SERIAL" ]; then
+  adb_prefix="$ADB_BIN -s $ANDROID_SERIAL"
+else
+  adb_prefix="$ADB_BIN"
+fi
+
+printf 'adb_shell_command=%s shell "am start -W -a android.intent.action.VIEW -d '\''%s'\''"\n' "$adb_prefix" "$deeplink"
 
 if [ "$run_adb" = true ]; then
-  "$ADB_BIN" shell "am start -W -a android.intent.action.VIEW -d '$deeplink'"
+  adb_cmd shell "am start -W -a android.intent.action.VIEW -d '$deeplink'"
 fi
