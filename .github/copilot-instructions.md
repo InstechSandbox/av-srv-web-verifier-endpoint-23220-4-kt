@@ -5,6 +5,7 @@
 - This repo owns verifier request generation, request object handling, trust behaviour, and backend presentation processing.
 - The current program priority is verifier delivery, so protocol correctness here matters more than UI convenience.
 - When verifier protocol behaviour, request-object handling, trust validation, or local verifier runtime changes, update `project-docs` in the same task.
+- Default Git flow in this workspace is local `wip/<stream>` commits promoted directly with `git push origin HEAD:main`; do not publish remote `wip/<stream>` branches unless explicitly requested.
 
 ## Local Checks
 
