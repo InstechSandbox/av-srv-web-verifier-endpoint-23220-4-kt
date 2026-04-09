@@ -1,0 +1,26 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      aws-region:
+        description: AWS region for the target ECR registry.
+        required: true
+        type: string
+      aws-role-arn:
+        description: AWS IAM role ARN to assume through GitHub OIDC.
+        required: true
+        type: string
+
+jobs:
+  publish:
+    uses: InstechSandbox/.github/.github/workflows/reusable-ecr-publish.yml@b1b2daa559dbc981f6d0c6b42adb6fb115038081
+    with:
+      aws-region: ${{ inputs.aws-region }}
+      aws-role-arn: ${{ inputs.aws-role-arn }}
+      repository-name: test/av-srv-web-verifier-endpoint-23220-4-kt
+      image-name: av-srv-web-verifier-endpoint-23220-4-kt
+      dockerfile: Dockerfile.local
+      tags: |
+        main
+        ${{ github.sha }}
