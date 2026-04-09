@@ -1,0 +1,14 @@
+name: Validation
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    uses: InstechSandbox/.github/.github/workflows/reusable-gradle-validation.yml@ee7c589b6edeb479707d21c3d256092319e7af88
+    with:
+      java-version: '17'
+      gradle-command: ./gradlew test
