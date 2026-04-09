@@ -1,0 +1,23 @@
+name: Package
+
+on:
+  workflow_run:
+    workflows:
+      - Validation
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  package:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    uses: InstechSandbox/.github/.github/workflows/reusable-docker-build.yml@ee7c589b6edeb479707d21c3d256092319e7af88
+    with:
+      image-name: av-srv-web-verifier-endpoint-23220-4-kt
+      dockerfile: Dockerfile.local
+      push: false
+      tags: |
+        ghcr.io/instechsandbox/av-srv-web-verifier-endpoint-23220-4-kt:${{ github.event.workflow_run.head_sha || github.sha }}
+        ghcr.io/instechsandbox/av-srv-web-verifier-endpoint-23220-4-kt:main
