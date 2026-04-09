@@ -22,6 +22,7 @@ object OpenId4VPSpec {
     const val VERSION: String = "1.0"
 
     const val RESPONSE_URI: String = "response_uri"
+    const val RESPONSE_TYPE: String = "response_type"
 
     const val VP_TOKEN: String = "vp_token"
 

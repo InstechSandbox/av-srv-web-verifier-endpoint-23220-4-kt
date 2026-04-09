@@ -10,8 +10,10 @@ cert_file="$repo_dir/docker/local/certs/haproxy-local.pem"
 cert_crt_file="$repo_dir/docker/local/certs/localhost.crt"
 ui_repo_dir=$(CDPATH= cd -- "$repo_dir/.." && pwd)/eudi-web-verifier
 issuer_frontend_repo_dir=$(CDPATH= cd -- "$repo_dir/.." && pwd)/eudi-srv-web-issuing-frontend-eudiw-py
+issuer_backend_repo_dir=$(CDPATH= cd -- "$repo_dir/.." && pwd)/eudi-srv-web-issuing-eudiw-py
 issuer_shared_cert_default="$issuer_frontend_repo_dir/server.crt"
 issuer_shared_key_default="$issuer_frontend_repo_dir/server.key"
+pid_issuer_cert_dir_default="$issuer_backend_repo_dir/local/cert"
 detected_lan_ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)
 
 if [ -n "$detected_lan_ip" ]; then
@@ -23,6 +25,7 @@ fi
 VERIFIER_PUBLIC_HOST=${VERIFIER_PUBLIC_HOST:-$public_host_default}
 VERIFIER_PUBLIC_URL=${VERIFIER_PUBLIC_URL:-https://$VERIFIER_PUBLIC_HOST}
 VERIFIER_PUBLIC_IP=${VERIFIER_PUBLIC_IP:-$detected_lan_ip}
+VERIFIER_IRISHLIFE_CUSTOMERBASEURL=${VERIFIER_IRISHLIFE_CUSTOMERBASEURL:-$VERIFIER_PUBLIC_URL}
 
 if [ -z "${VERIFIER_SHARED_CERT_FILE:-}" ] && [ -z "${VERIFIER_SHARED_KEY_FILE:-}" ]; then
   if [ -f "$issuer_shared_cert_default" ] && [ -f "$issuer_shared_key_default" ]; then
@@ -31,7 +34,12 @@ if [ -z "${VERIFIER_SHARED_CERT_FILE:-}" ] && [ -z "${VERIFIER_SHARED_KEY_FILE:-
   fi
 fi
 
-export VERIFIER_PUBLIC_HOST VERIFIER_PUBLIC_URL VERIFIER_PUBLIC_IP
+if [ -z "${VERIFIER_PID_ISSUER_CERT_DIR:-}" ] && [ -d "$pid_issuer_cert_dir_default" ]; then
+  VERIFIER_PID_ISSUER_CERT_DIR="$pid_issuer_cert_dir_default"
+fi
+
+export VERIFIER_PUBLIC_HOST VERIFIER_PUBLIC_URL VERIFIER_PUBLIC_IP VERIFIER_IRISHLIFE_CUSTOMERBASEURL
+export VERIFIER_PID_ISSUER_CERT_DIR VERIFIER_IRISHLIFE_PIDISSUERCHAIN_PATH
 export VERIFIER_SHARED_CERT_FILE VERIFIER_SHARED_KEY_FILE
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -85,6 +93,9 @@ Direct service ports:
 
 TLS certificate source:
   ${VERIFIER_SHARED_CERT_FILE:-$cert_crt_file}
+
+Irish Life PID issuer chain source:
+  ${VERIFIER_PID_ISSUER_CERT_DIR:-not configured}/PID-DS-0001_UT_cert.pem
 
 If your browser or phone warns about the local certificate, trust docker/local/certs/localhost.crt for local development.
 EOF

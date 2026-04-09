@@ -38,6 +38,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
     implementation(libs.nimbusds.oauth2.oidc.sdk)
     implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-mail")
     implementation(libs.bouncy.castle)
     implementation(libs.arrow.core)
     implementation(libs.arrow.fx.coroutines)

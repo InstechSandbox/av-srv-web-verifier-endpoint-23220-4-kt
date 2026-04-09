@@ -84,6 +84,7 @@ import org.springframework.core.io.FileSystemResource
 import org.springframework.core.io.ResourceLoader
 import org.springframework.http.codec.json.KotlinSerializationJsonDecoder
 import org.springframework.http.codec.json.KotlinSerializationJsonEncoder
+import org.springframework.mail.javamail.JavaMailSender
 import org.springframework.security.config.web.server.ServerHttpSecurity
 import org.springframework.security.config.web.server.invoke
 import org.springframework.web.cors.CorsConfiguration
@@ -369,6 +370,15 @@ internal fun beans(clock: Clock) = beans {
     // End points
     //
 
+    bean { IrishLifeCaseStore(clock = ref()) }
+    bean {
+        IrishLifeEmailSender(
+            provider<JavaMailSender>().ifAvailable,
+            env.getProperty("verifier.mail.from"),
+            env.getProperty("spring.mail.host"),
+        )
+    }
+
     bean {
         val walletApi = WalletApi(
             ref(),
@@ -387,11 +397,24 @@ internal fun beans(clock: Clock) = beans {
                 .removeSuffix("/**"),
         )
         val utilityApi = UtilityApi(ref(), ref())
+        val irishLifeCaseApi = IrishLifeCaseApi(
+            ref(),
+            ref(),
+            ref(),
+            ref(),
+            env.getProperty("verifier.irishlife.customerBaseUrl")
+                ?: env.getProperty("verifier.publicurl")
+                ?: "https://localhost",
+            env.readOptionalTextResource("verifier.irishlife.pidIssuerChain.path"),
+            ref(),
+            ref(),
+        )
         walletApi.route
             .and(verifierApi.route)
             .and(staticContent.route)
             .and(swaggerUi.route)
             .and(utilityApi.route)
+            .and(irishLifeCaseApi.route)
     }
 
     //
@@ -712,6 +735,18 @@ private fun Environment.fallbackTrustSources(): Map<Regex, TrustSourceConfig>? =
     parseKeyStoreConfig("trustedIssuers.keystore")?.let {
         mapOf(".*".toRegex() to TrustSourcesConfig(null, it))
     }
+
+private fun Environment.readOptionalTextResource(property: String): String? = getPropertyOrEnvVariable(property)
+    ?.let { resourcePath ->
+        runCatching {
+            val resource = DefaultResourceLoader().getResource(resourcePath)
+            require(resource.exists()) { "Resource does not exist" }
+            resource.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().trim() }
+        }.onFailure {
+            log.warn("Failed to load text resource from '{}'", resourcePath, it)
+        }.getOrNull()
+    }
+    ?.takeIf { it.isNotBlank() }
 
 private fun Environment.parseKeyStoreConfig(propertyPrefix: String): KeyStoreConfig? = getPropertyOrEnvVariable(
     "$propertyPrefix.path",

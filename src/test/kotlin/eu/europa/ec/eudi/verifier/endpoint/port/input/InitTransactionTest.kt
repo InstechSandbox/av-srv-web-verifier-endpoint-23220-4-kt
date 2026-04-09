@@ -29,7 +29,10 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.io.bytestring.decodeToByteString
 import kotlinx.io.bytestring.decodeToString
 import kotlinx.serialization.json.*
+import java.net.URI
+import java.net.URLDecoder
 import java.net.URL
+import java.nio.charset.StandardCharsets
 import java.time.Duration
 import kotlin.test.*
 
@@ -110,6 +113,33 @@ class InitTransactionTest {
                 loadPresentationById(testTransactionId)?.let { it is Presentation.Requested } ?: false
             }
         }
+
+    @Test
+    fun `same-device authorization request uri includes outer response_type for wallet compatibility`() {
+        val authorizationRequest = InitTransactionResponse.JwtSecuredAuthorizationRequestTO.byReference(
+            transactionId = testTransactionId.value,
+            clientId = verifierConfig.verifierId.clientId,
+            requestUri = uri,
+            requestUriMethod = RequestUriMethodTO.Get,
+        )
+
+        val authorizationRequestUri = createAuthorizationRequestUri(
+            scheme = verifierConfig.authorizationRequestScheme,
+            authorizationRequest = authorizationRequest,
+        )
+
+        val params = URI.create(authorizationRequestUri.toString()).rawQuery
+            .split("&")
+            .associate {
+                val parts = it.split("=", limit = 2)
+                parts[0] to URLDecoder.decode(parts.getOrElse(1) { "" }, StandardCharsets.UTF_8)
+            }
+
+        assertEquals(OpenId4VPSpec.VP_TOKEN, params[OpenId4VPSpec.RESPONSE_TYPE])
+        assertEquals(verifierConfig.verifierId.clientId.toString(), params[RFC6749.CLIENT_ID])
+        assertEquals(uri.toExternalForm(), params[RFC9101.REQUEST_URI])
+        assertEquals(OpenId4VPSpec.REQUEST_URI_METHOD_GET, params[OpenId4VPSpec.REQUEST_URI_METHOD])
+    }
 
     @Test
     fun `when input misses DCQL validation error is raised`() = runTest {

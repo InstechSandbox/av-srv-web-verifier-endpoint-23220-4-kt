@@ -415,7 +415,7 @@ internal fun InitTransactionTO.toDomain(
     nonce to presentationType
 }
 
-private fun createAuthorizationRequestUri(
+internal fun createAuthorizationRequestUri(
     scheme: String,
     authorizationRequest: InitTransactionResponse.JwtSecuredAuthorizationRequestTO,
 ): URI =
@@ -423,6 +423,7 @@ private fun createAuthorizationRequestUri(
         scheme(scheme)
         authority(authorizationRequestAuthority(authorizationRequest))
         appendQueryParameter(RFC6749.CLIENT_ID, authorizationRequest.clientId)
+        appendQueryParameter(OpenId4VPSpec.RESPONSE_TYPE, OpenId4VPSpec.VP_TOKEN)
         authorizationRequest.request?.let { appendQueryParameter(RFC9101.REQUEST, it) }
         authorizationRequest.requestUri?.let { appendQueryParameter(RFC9101.REQUEST_URI, it) }
         authorizationRequest.requestUriMethod?.let {

@@ -9,10 +9,14 @@ services:
       - "8080:8080"
     environment:
       VERIFIER_PUBLICURL: ${VERIFIER_PUBLIC_URL:-https://localhost}
+      VERIFIER_IRISHLIFE_CUSTOMERBASEURL: ${VERIFIER_IRISHLIFE_CUSTOMERBASEURL:-https://localhost}
+      VERIFIER_IRISHLIFE_PIDISSUERCHAIN_PATH: ${VERIFIER_IRISHLIFE_PIDISSUERCHAIN_PATH:-file:/opt/verifier/local-issuer-certs/PID-DS-0001_UT_cert.pem}
       VERIFIER_REQUESTJWT_EMBED: ByReference
       VERIFIER_REQUESTJWT_REQUESTURIMETHOD: Get
       VERIFIER_RESPONSE_MODE: DirectPost
       VERIFIER_AUTHORIZATIONREQUESTSCHEME: haip-vp
+    volumes:
+      - ${VERIFIER_PID_ISSUER_CERT_DIR:-./local/certs}:/opt/verifier/local-issuer-certs:ro
 
   verifier-ui:
     build:

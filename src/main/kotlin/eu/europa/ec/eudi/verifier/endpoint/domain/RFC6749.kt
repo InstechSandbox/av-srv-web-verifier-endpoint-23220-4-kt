@@ -21,6 +21,7 @@ package eu.europa.ec.eudi.verifier.endpoint.domain
 object RFC6749 {
 
     const val CLIENT_ID: String = "client_id"
+    const val RESPONSE_TYPE: String = "response_type"
     const val STATE: String = "state"
     const val ERROR: String = "error"
     const val ERROR_DESCRIPTION: String = "error_description"
