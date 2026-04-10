@@ -12,6 +12,10 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   publish:
     uses: InstechSandbox/.github/.github/workflows/reusable-ecr-publish.yml@b1b2daa559dbc981f6d0c6b42adb6fb115038081
@@ -24,3 +28,13 @@ jobs:
       tags: |
         main
         ${{ github.sha }}
+
+  scaffold-deployment:
+    needs: publish
+    uses: InstechSandbox/.github/.github/workflows/reusable-deployment-scaffold.yml@b1b2daa559dbc981f6d0c6b42adb6fb115038081
+    with:
+      environment: test
+      component: verifier-backend
+      artifact-kind: container-image
+      artifact-ref: ${{ needs.publish.outputs.registry }}/test/av-srv-web-verifier-endpoint-23220-4-kt@${{ needs.publish.outputs.image-digest }}
+      notes: Published image digest for test environment deployment consumption.
