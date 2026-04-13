@@ -3,14 +3,15 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile.local
-    image: verifier-backend:local
-    container_name: verifier-backend
+    image: ${VERIFIER_BACKEND_IMAGE:-verifier-backend:local}
+    container_name: ${VERIFIER_BACKEND_CONTAINER_NAME:-verifier-backend}
     ports:
-      - "8080:8080"
+      - "${VERIFIER_BACKEND_HOST_PORT:-8080}:8080"
     environment:
       VERIFIER_PUBLICURL: ${VERIFIER_PUBLIC_URL:-https://localhost}
       VERIFIER_IRISHLIFE_CUSTOMERBASEURL: ${VERIFIER_IRISHLIFE_CUSTOMERBASEURL:-https://localhost}
-      VERIFIER_IRISHLIFE_PIDISSUERCHAIN_PATH: ${VERIFIER_IRISHLIFE_PIDISSUERCHAIN_PATH:-file:/opt/verifier/local-issuer-certs/PID-DS-0001_UT_cert.pem}
+      VERIFIER_IRISHLIFE_PIDISSUERCHAIN_PATH: ${VERIFIER_IRISHLIFE_PIDISSUERCHAIN_PATH:-file:/opt/verifier/local-issuer-certs/PID-DS-LOCAL-UT_cert.pem}
+      VERIFIER_CLIENTMETADATA_VPFORMATS_MSOMDOC_ENABLED: ${VERIFIER_CLIENTMETADATA_VPFORMATS_MSOMDOC_ENABLED:-true}
       VERIFIER_REQUESTJWT_EMBED: ByReference
       VERIFIER_REQUESTJWT_REQUESTURIMETHOD: Get
       VERIFIER_RESPONSE_MODE: DirectPost
@@ -22,23 +23,23 @@ services:
     build:
       context: ../../eudi-web-verifier
       dockerfile: Dockerfile
-    image: eudi-web-verifier:local
-    container_name: verifier-ui
+    image: ${VERIFIER_UI_IMAGE:-eudi-web-verifier:local}
+    container_name: ${VERIFIER_UI_CONTAINER_NAME:-verifier-ui}
     depends_on:
       - verifier
     ports:
-      - "4300:4300"
+      - "${VERIFIER_UI_HOST_PORT:-4300}:4300"
     environment:
       HOST_API: ${VERIFIER_PUBLIC_URL:-https://localhost}
 
   haproxy:
     image: haproxy:2.7.2
-    container_name: verifier-haproxy
+    container_name: ${VERIFIER_HAPROXY_CONTAINER_NAME:-verifier-haproxy}
     depends_on:
       - verifier
       - verifier-ui
     ports:
-      - "443:443"
+      - "${VERIFIER_TLS_HOST_PORT:-443}:443"
     volumes:
-      - ./haproxy.conf:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ${VERIFIER_HAPROXY_CONFIG_FILE:-./haproxy.conf}:/usr/local/etc/haproxy/haproxy.cfg:ro
       - ./local/certs/haproxy-local.pem:/etc/ssl/certs/mysite.pem:ro

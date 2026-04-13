@@ -44,4 +44,5 @@ out/
 .gradle-validate/
 flask_session/
 docker/haproxy.pem
+docker/local/haproxy.generated.cfg
 docker/local/certs/

@@ -89,7 +89,6 @@ internal class ValidateSdJwtVc(
     private val sdJwtVcValidatorFactory: (X5CShouldBe.Trusted?) -> SdJwtVcValidator,
     private val parsePemEncodedX509CertificateChain: ParsePemEncodedX509CertificateChain,
 ) {
-
     suspend operator fun invoke(
         unverified: JsonObject,
         nonce: Nonce,
