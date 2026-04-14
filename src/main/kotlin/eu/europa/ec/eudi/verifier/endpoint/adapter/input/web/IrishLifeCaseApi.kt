@@ -615,6 +615,39 @@ internal class IrishLifeEmailSender(
         },
     )
 
+    fun sendExistingBusinessInvite(
+        to: String,
+        customerName: String,
+        claimReference: String,
+        customerPortalUrl: String,
+    ): Boolean = send(
+        to = to,
+        subject = "Irish Life Existing Business withdrawal proof request",
+        body = buildString {
+            appendLine("Hello $customerName,")
+            appendLine()
+            appendLine("Irish Life needs you to confirm your Existing Business withdrawal request for claim reference $claimReference.")
+            appendLine("Open this secure page to review the request and share your wallet proof: $customerPortalUrl")
+            appendLine()
+            appendLine("If you open the page on a desktop device you can scan the QR code. If you open it on mobile, you can continue directly into your wallet.")
+        },
+    )
+
+    fun sendExistingBusinessCompletion(
+        to: String,
+        customerName: String,
+        claimReference: String,
+    ): Boolean = send(
+        to = to,
+        subject = "Irish Life Existing Business withdrawal proof completed",
+        body = buildString {
+            appendLine("Hello $customerName,")
+            appendLine()
+            appendLine("Your Irish Life Existing Business withdrawal proof process for claim reference $claimReference has been completed.")
+            appendLine("No further action is needed from you at this stage.")
+        },
+    )
+
     private fun send(to: String, subject: String, body: String): Boolean {
         val configuredSender = mailSender
         val configuredHost = smtpHost?.trim()

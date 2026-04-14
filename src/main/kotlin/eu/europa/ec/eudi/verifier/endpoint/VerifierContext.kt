@@ -371,6 +371,7 @@ internal fun beans(clock: Clock) = beans {
     //
 
     bean { IrishLifeCaseStore(clock = ref()) }
+    bean { ExistingBusinessCaseStore(clock = ref()) }
     bean {
         IrishLifeEmailSender(
             provider<JavaMailSender>().ifAvailable,
@@ -409,12 +410,25 @@ internal fun beans(clock: Clock) = beans {
             ref(),
             ref(),
         )
+        val existingBusinessCaseApi = ExistingBusinessCaseApi(
+            ref(),
+            ref(),
+            ref(),
+            ref(),
+            env.getProperty("verifier.irishlife.customerBaseUrl")
+                ?: env.getProperty("verifier.publicurl")
+                ?: "https://localhost",
+            env.readOptionalTextResource("verifier.irishlife.pidIssuerChain.path"),
+            ref(),
+            ref(),
+        )
         walletApi.route
             .and(verifierApi.route)
             .and(staticContent.route)
             .and(swaggerUi.route)
             .and(utilityApi.route)
             .and(irishLifeCaseApi.route)
+            .and(existingBusinessCaseApi.route)
     }
 
     //
