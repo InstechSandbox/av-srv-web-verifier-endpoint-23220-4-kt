@@ -30,6 +30,12 @@ import eu.europa.ec.eudi.verifier.endpoint.domain.Nonce
 import eu.europa.ec.eudi.verifier.endpoint.port.out.x509.ParsePemEncodedX509CertificateChain
 import eu.europa.ec.eudi.verifier.endpoint.port.out.x509.x5cShouldBeTrustedOrNull
 import kotlinx.serialization.json.*
+import org.slf4j.LoggerFactory
+import java.io.ByteArrayInputStream
+import java.security.MessageDigest
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
+import java.util.Base64
 
 internal enum class SdJwtVcValidationErrorCodeTO {
     IsUnparsable,
@@ -108,6 +114,10 @@ internal class ValidateSdJwtVc(
         nonce: Nonce,
         issuerChain: String?,
     ): SdJwtVcValidationResult {
+        incomingLeafSummary(unverified)?.let {
+            logger.info("ValidateSdJwtVc incoming leaf: {}", it)
+        }
+
         val sdJwtVcValidator = sdJwtVcValidator(issuerChain)
             .getOrElse {
                 return SdJwtVcValidationResult.Invalid(nonEmptyListOf(it.toInvalidIssuersChainSdJwtVcValidationError()))
@@ -124,9 +134,53 @@ internal class ValidateSdJwtVc(
 
     private fun sdJwtVcValidator(issuerChain: String?): Either<Throwable, SdJwtVcValidator> = Either.catch {
         val x5cShouldBe = issuerChain
-            ?.let { parsePemEncodedX509CertificateChain.x5cShouldBeTrustedOrNull(it).getOrThrow() }
+            ?.let {
+                parsePemEncodedX509CertificateChain.x5cShouldBeTrustedOrNull(it).getOrThrow()
+                    ?.also { trusted ->
+                        logger.info(
+                            "ValidateSdJwtVc configured trusted issuer chain leaf: {}",
+                            trusted.rootCACertificates.first().summary(),
+                        )
+                    }
+            }
+            ?: run {
+                logger.warn("ValidateSdJwtVc invoked without configured issuer chain")
+                null
+            }
         sdJwtVcValidatorFactory(x5cShouldBe)
     }
+
+    companion object {
+        private val logger = LoggerFactory.getLogger(ValidateSdJwtVc::class.java)
+    }
+}
+
+private fun incomingLeafSummary(unverified: Either<JsonObject, String>): String? =
+    unverified.fold(
+        ifLeft = { json ->
+            json["vp_token"]?.jsonPrimitive?.contentOrNull?.let(::signedJwtLeafSummary)
+        },
+        ifRight = ::signedJwtLeafSummary,
+    )
+
+private fun signedJwtLeafSummary(token: String): String? =
+    Either.catch {
+        val x5c = SignedJWT.parse(token.substringBefore("~")).header.toJSONObject()["x5c"] as? List<*>
+        val firstCert = x5c?.firstOrNull() as? String ?: return@catch null
+        val certBytes = Base64.getDecoder().decode(firstCert)
+        val certificate = CertificateFactory.getInstance("X.509")
+            .generateCertificate(ByteArrayInputStream(certBytes)) as X509Certificate
+        certificate.summary()
+    }.getOrNull()
+
+private fun X509Certificate.summary(): String {
+    val sans = subjectAlternativeNames
+        ?.joinToString(",") { entry -> "${entry[0]}:${entry[1]}" }
+        ?: "none"
+    val sha256 = MessageDigest.getInstance("SHA-256")
+        .digest(encoded)
+        .joinToString("") { "%02x".format(it) }
+    return "subject=${subjectX500Principal.name}; issuer=${issuerX500Principal.name}; san=$sans; sha256=$sha256"
 }
 
 private fun Throwable.toInvalidIssuersChainSdJwtVcValidationError(): SdJwtVcValidationErrorDetailsTO =

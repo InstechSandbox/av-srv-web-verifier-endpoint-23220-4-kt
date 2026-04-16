@@ -9,7 +9,10 @@ import eu.europa.ec.eudi.verifier.endpoint.adapter.out.json.jsonSupport
 import eu.europa.ec.eudi.verifier.endpoint.domain.ClaimsQuery
 import eu.europa.ec.eudi.verifier.endpoint.domain.ClientId
 import eu.europa.ec.eudi.verifier.endpoint.domain.CredentialQuery
+import eu.europa.ec.eudi.verifier.endpoint.domain.CredentialQueryIds
+import eu.europa.ec.eudi.verifier.endpoint.domain.CredentialSetQuery
 import eu.europa.ec.eudi.verifier.endpoint.domain.Credentials
+import eu.europa.ec.eudi.verifier.endpoint.domain.CredentialSets
 import eu.europa.ec.eudi.verifier.endpoint.domain.DCQL
 import eu.europa.ec.eudi.verifier.endpoint.domain.DCQLMetaSdJwtVcExtensions
 import eu.europa.ec.eudi.verifier.endpoint.domain.Nonce
@@ -392,6 +395,11 @@ internal class IrishLifeCaseApi(
 
     private fun newBusinessTransactionInit(customerPortalUrl: String): InitTransactionTO {
         val queryId = QueryId("query_pid")
+        logger.info(
+            "Irish Life new-business DCQL summary: issuerChainConfigured={}, queryId={}, format=dc+sd-jwt, vct=urn:eudi:pid:1, claimCount=11, credentialSets=single",
+            !pidIssuerChain.isNullOrBlank(),
+            queryId,
+        )
         val pidQuery = CredentialQuery.sdJwtVc(
             id = queryId,
             sdJwtVcMeta = DCQLMetaSdJwtVcExtensions(vctValues = listOf("urn:eudi:pid:1")),
@@ -411,7 +419,12 @@ internal class IrishLifeCaseApi(
         )
 
         return InitTransactionTO(
-            dcqlQuery = DCQL(credentials = Credentials(pidQuery)),
+            dcqlQuery = DCQL(
+                credentials = Credentials(pidQuery),
+                credentialSets = CredentialSets(
+                    CredentialSetQuery(options = listOf(CredentialQueryIds(listOf(queryId))))
+                ),
+            ),
             nonce = UUID.randomUUID().toString(),
             requestUriMethod = RequestUriMethodTO.Get,
             redirectUriTemplate = "$customerPortalUrl?response_code={RESPONSE_CODE}",
