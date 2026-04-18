@@ -51,7 +51,8 @@ jobs:
 
   deploy-runtime:
     needs: publish
-    uses: InstechSandbox/.github/.github/workflows/reusable-test-runtime-deploy.yml@3c07eeba5cb8177d34e2ba96142d3549bd338da7
+    uses: InstechSandbox/.github/.github/workflows/reusable-test-runtime-deploy.yml@23c0a65ea5ffb2a2e67f3f48bad5166a3ea8064f
+    secrets: inherit
     with:
       aws-region: eu-west-1
       aws-role-arn: arn:aws:iam::718959508203:role/GitHubActionsInstechSandboxDeploy
