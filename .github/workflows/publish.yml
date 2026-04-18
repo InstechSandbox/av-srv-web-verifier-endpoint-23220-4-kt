@@ -1,15 +1,24 @@
 name: Publish
 
 on:
+  workflow_run:
+    workflows:
+      - Validation
+    types:
+      - completed
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       aws-region:
         description: AWS region for the target ECR registry.
-        required: true
+        required: false
+        default: eu-west-1
         type: string
       aws-role-arn:
         description: AWS IAM role ARN to assume through GitHub OIDC.
-        required: true
+        required: false
+        default: arn:aws:iam::718959508203:role/GitHubActionsInstechSandboxPublish
         type: string
 
 permissions:
@@ -18,16 +27,17 @@ permissions:
 
 jobs:
   publish:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     uses: InstechSandbox/.github/.github/workflows/reusable-ecr-publish.yml@b1b2daa559dbc981f6d0c6b42adb6fb115038081
     with:
-      aws-region: ${{ inputs.aws-region }}
-      aws-role-arn: ${{ inputs.aws-role-arn }}
+      aws-region: ${{ github.event.inputs.aws-region || 'eu-west-1' }}
+      aws-role-arn: ${{ github.event.inputs.aws-role-arn || 'arn:aws:iam::718959508203:role/GitHubActionsInstechSandboxPublish' }}
       repository-name: test/av-srv-web-verifier-endpoint-23220-4-kt
       image-name: av-srv-web-verifier-endpoint-23220-4-kt
       dockerfile: Dockerfile.local
       tags: |
         main
-        ${{ github.sha }}
+        ${{ github.event.workflow_run.head_sha || github.sha }}
 
   scaffold-deployment:
     needs: publish
@@ -38,3 +48,18 @@ jobs:
       artifact-kind: container-image
       artifact-ref: ${{ needs.publish.outputs.registry }}/test/av-srv-web-verifier-endpoint-23220-4-kt@${{ needs.publish.outputs.image-digest }}
       notes: Published image digest for test environment deployment consumption.
+
+  deploy-runtime:
+    needs: publish
+    uses: InstechSandbox/instechsandbox-eudi-deploy/.github/workflows/deploy-test-runtime.yml@main
+    with:
+      aws-region: eu-west-1
+      aws-role-arn: arn:aws:iam::718959508203:role/GitHubActionsInstechSandboxDeploy
+      runtime-backend-bucket: instechsandbox-eudi-terraform-state-718959508203-eu-west-1
+      runtime-backend-dynamodb-table: instechsandbox-eudi-terraform-locks
+      foundation-state-bucket: instechsandbox-eudi-terraform-state-718959508203-eu-west-1
+      runtime-config-profile: full-public-demo
+      public-ingress-enabled: 'true'
+      public-base-domain: test.instech-eudi-poc.com
+      public-hosted-zone-id: Z01745022CR6TI0M2DI9E
+      verifier-backend-ref: ${{ needs.publish.outputs.registry }}/test/av-srv-web-verifier-endpoint-23220-4-kt@${{ needs.publish.outputs.image-digest }}
