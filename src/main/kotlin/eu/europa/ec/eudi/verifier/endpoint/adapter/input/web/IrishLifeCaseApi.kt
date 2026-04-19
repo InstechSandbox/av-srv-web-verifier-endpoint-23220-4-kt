@@ -1,3 +1,18 @@
+/*
+ * Copyright (c) 2023 European Commission
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package eu.europa.ec.eudi.verifier.endpoint.adapter.input.web
 
 import arrow.core.getOrElse
@@ -11,8 +26,8 @@ import eu.europa.ec.eudi.verifier.endpoint.domain.ClientId
 import eu.europa.ec.eudi.verifier.endpoint.domain.CredentialQuery
 import eu.europa.ec.eudi.verifier.endpoint.domain.CredentialQueryIds
 import eu.europa.ec.eudi.verifier.endpoint.domain.CredentialSetQuery
-import eu.europa.ec.eudi.verifier.endpoint.domain.Credentials
 import eu.europa.ec.eudi.verifier.endpoint.domain.CredentialSets
+import eu.europa.ec.eudi.verifier.endpoint.domain.Credentials
 import eu.europa.ec.eudi.verifier.endpoint.domain.DCQL
 import eu.europa.ec.eudi.verifier.endpoint.domain.DCQLMetaSdJwtVcExtensions
 import eu.europa.ec.eudi.verifier.endpoint.domain.Nonce
@@ -33,14 +48,13 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType.APPLICATION_JSON
 import org.springframework.mail.SimpleMailMessage
@@ -50,8 +64,8 @@ import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
-import java.time.format.DateTimeParseException
 import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -296,12 +310,15 @@ internal class IrishLifeCaseApi(
                 put("birthDate", JsonPrimitive(birthDate))
                 put("address", JsonPrimitive(address))
                 put("expiry", JsonPrimitive(expiry))
-                put("disclosedClaimPaths", buildJsonArray {
-                    disclosedClaims.keys
-                        .map { it.toString() }
-                        .sorted()
-                        .forEach { add(JsonPrimitive(it)) }
-                })
+                put(
+                    "disclosedClaimPaths",
+                    buildJsonArray {
+                        disclosedClaims.keys
+                            .map { it.toString() }
+                            .sorted()
+                            .forEach { add(JsonPrimitive(it)) }
+                    },
+                )
             },
         )
     }
@@ -340,13 +357,20 @@ internal class IrishLifeCaseApi(
                         statuses = statuses + terminalStatuses,
                         completionEmailSent = completionEmailSent,
                         validation = validation,
-                        failureReason = if (completionEmailSent) null else "Completion email was not sent by the backend.",
+                        failureReason = if (completionEmailSent) {
+                            null
+                        } else {
+                            "Completion email was not sent by the backend."
+                        },
                     )
                 }
             }
         } else {
             logger.warn(
-                "Irish Life validation failed for caseId={}, policyReference={}, transactionId={}, application={}, claimsSnapshot={}, reason={}",
+                (
+                    "Irish Life validation failed for caseId={}, policyReference={}, transactionId={}, " +
+                        "application={}, claimsSnapshot={}, reason={}"
+                    ),
                 caseState.id,
                 caseState.policyReference,
                 caseState.activeTransaction?.initializedTransaction?.transactionId,
@@ -396,7 +420,10 @@ internal class IrishLifeCaseApi(
     private fun newBusinessTransactionInit(customerPortalUrl: String): InitTransactionTO {
         val queryId = QueryId("query_pid")
         logger.info(
-            "Irish Life new-business DCQL summary: issuerChainConfigured={}, queryId={}, format=dc+sd-jwt, vct=urn:eudi:pid:1, claimCount=11, credentialSets=single",
+            (
+                "Irish Life new-business DCQL summary: issuerChainConfigured={}, queryId={}, " +
+                    "format=dc+sd-jwt, vct=urn:eudi:pid:1, claimCount=11, credentialSets=single"
+                ),
             !pidIssuerChain.isNullOrBlank(),
             queryId,
         )
@@ -422,7 +449,7 @@ internal class IrishLifeCaseApi(
             dcqlQuery = DCQL(
                 credentials = Credentials(pidQuery),
                 credentialSets = CredentialSets(
-                    CredentialSetQuery(options = listOf(CredentialQueryIds(listOf(queryId))))
+                    CredentialSetQuery(options = listOf(CredentialQueryIds(listOf(queryId)))),
                 ),
             ),
             nonce = UUID.randomUUID().toString(),
@@ -450,7 +477,7 @@ internal class IrishLifeCaseApi(
         initialized.request?.let { params += "request=${urlEncode(it)}" }
         initialized.requestUri?.let { params += "request_uri=${urlEncode(it)}" }
         initialized.requestUriMethod?.let { params += "request_uri_method=${urlEncode(it.name.lowercase())}" }
-        return "$scheme://$authority?${params.joinToString("&")}" 
+        return "$scheme://$authority?${params.joinToString("&")}"
     }
 
     private fun urlEncode(value: String): String = java.net.URLEncoder.encode(value, Charsets.UTF_8)
@@ -609,7 +636,10 @@ internal class IrishLifeEmailSender(
             appendLine("Irish Life needs you to share your wallet proof for New Business policy reference $policyReference.")
             appendLine("Open this secure page to continue: $customerPortalUrl")
             appendLine()
-            appendLine("If you open the page on a desktop device you can scan the QR code. If you open it on mobile, you can continue directly into your wallet.")
+            appendLine(
+                "If you open the page on a desktop device you can scan the QR code. " +
+                    "If you open it on mobile, you can continue directly into your wallet.",
+            )
         },
     )
 
@@ -642,7 +672,10 @@ internal class IrishLifeEmailSender(
             appendLine("Irish Life needs you to confirm your Existing Business withdrawal request for claim reference $claimReference.")
             appendLine("Open this secure page to review the request and share your wallet proof: $customerPortalUrl")
             appendLine()
-            appendLine("If you open the page on a desktop device you can scan the QR code. If you open it on mobile, you can continue directly into your wallet.")
+            appendLine(
+                "If you open the page on a desktop device you can scan the QR code. " +
+                    "If you open it on mobile, you can continue directly into your wallet.",
+            )
         },
     )
 

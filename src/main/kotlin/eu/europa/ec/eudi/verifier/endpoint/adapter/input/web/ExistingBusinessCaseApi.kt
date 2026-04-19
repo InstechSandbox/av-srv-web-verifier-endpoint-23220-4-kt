@@ -1,3 +1,18 @@
+/*
+ * Copyright (c) 2023 European Commission
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package eu.europa.ec.eudi.verifier.endpoint.adapter.input.web
 
 import arrow.core.getOrElse
@@ -10,8 +25,8 @@ import eu.europa.ec.eudi.verifier.endpoint.domain.ClaimsQuery
 import eu.europa.ec.eudi.verifier.endpoint.domain.CredentialQuery
 import eu.europa.ec.eudi.verifier.endpoint.domain.CredentialQueryIds
 import eu.europa.ec.eudi.verifier.endpoint.domain.CredentialSetQuery
-import eu.europa.ec.eudi.verifier.endpoint.domain.Credentials
 import eu.europa.ec.eudi.verifier.endpoint.domain.CredentialSets
+import eu.europa.ec.eudi.verifier.endpoint.domain.Credentials
 import eu.europa.ec.eudi.verifier.endpoint.domain.DCQL
 import eu.europa.ec.eudi.verifier.endpoint.domain.DCQLMetaSdJwtVcExtensions
 import eu.europa.ec.eudi.verifier.endpoint.domain.Nonce
@@ -73,7 +88,9 @@ internal class ExistingBusinessCaseApi(
         POST(COMPLETE_PATH, accept(APPLICATION_JSON), ::handleCompleteCase)
     }
 
-    private suspend fun handleListCases(@Suppress("UNUSED_PARAMETER") request: ServerRequest): ServerResponse {
+    private suspend fun handleListCases(
+        @Suppress("UNUSED_PARAMETER") request: ServerRequest,
+    ): ServerResponse {
         val refreshedCases = store.list().map { refreshCaseFromWallet(it) }
         return ServerResponse.ok().json().bodyValueAndAwait(refreshedCases.map { it.toSummary() })
     }
@@ -82,7 +99,7 @@ internal class ExistingBusinessCaseApi(
         val body = request.awaitBody<CreateExistingBusinessCaseRequestTO>()
         val demoPolicy = demoPolicy(body.policyNumber.trim())
             ?: return ServerResponse.badRequest().json().bodyValueAndAwait(
-                mapOf("error" to "Only demo policy number 12345678 is supported for the Existing Business flow.")
+                mapOf("error" to "Only demo policy number 12345678 is supported for the Existing Business flow."),
             )
 
         val created = store.create(demoPolicy, customerBaseUrl)
@@ -336,12 +353,15 @@ internal class ExistingBusinessCaseApi(
                 put("birthDate", JsonPrimitive(birthDate))
                 put("address", JsonPrimitive(address))
                 put("expiry", JsonPrimitive(expiry))
-                put("disclosedClaimPaths", buildJsonArray {
-                    disclosedClaims.keys
-                        .map { it.toString() }
-                        .sorted()
-                        .forEach { add(JsonPrimitive(it)) }
-                })
+                put(
+                    "disclosedClaimPaths",
+                    buildJsonArray {
+                        disclosedClaims.keys
+                            .map { it.toString() }
+                            .sorted()
+                            .forEach { add(JsonPrimitive(it)) }
+                    },
+                )
             },
         )
     }
@@ -437,7 +457,10 @@ internal class ExistingBusinessCaseApi(
     private fun existingBusinessTransactionInit(customerPortalUrl: String): InitTransactionTO {
         val queryId = QueryId(PID_QUERY_ID)
         logger.info(
-            "Irish Life existing-business DCQL summary: issuerChainConfigured={}, queryId={}, format=dc+sd-jwt, vct=urn:eudi:pid:1, claimCount=11, credentialSets=single",
+            (
+                "Irish Life existing-business DCQL summary: issuerChainConfigured={}, queryId={}, " +
+                    "format=dc+sd-jwt, vct=urn:eudi:pid:1, claimCount=11, credentialSets=single"
+                ),
             !pidIssuerChain.isNullOrBlank(),
             queryId,
         )
@@ -463,7 +486,7 @@ internal class ExistingBusinessCaseApi(
             dcqlQuery = DCQL(
                 credentials = Credentials(pidQuery),
                 credentialSets = CredentialSets(
-                    CredentialSetQuery(options = listOf(CredentialQueryIds(listOf(queryId))))
+                    CredentialSetQuery(options = listOf(CredentialQueryIds(listOf(queryId)))),
                 ),
             ),
             nonce = UUID.randomUUID().toString(),
@@ -491,7 +514,7 @@ internal class ExistingBusinessCaseApi(
         initialized.request?.let { params += "request=${urlEncode(it)}" }
         initialized.requestUri?.let { params += "request_uri=${urlEncode(it)}" }
         initialized.requestUriMethod?.let { params += "request_uri_method=${urlEncode(it.name.lowercase())}" }
-        return "$scheme://$authority?${params.joinToString("&")}" 
+        return "$scheme://$authority?${params.joinToString("&")}"
     }
 
     private fun urlEncode(value: String): String = java.net.URLEncoder.encode(value, Charsets.UTF_8)
