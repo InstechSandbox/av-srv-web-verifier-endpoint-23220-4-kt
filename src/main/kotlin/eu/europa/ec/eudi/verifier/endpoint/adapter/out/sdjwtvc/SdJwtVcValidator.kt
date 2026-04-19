@@ -29,6 +29,7 @@ import eu.europa.ec.eudi.sdjwt.*
 import eu.europa.ec.eudi.sdjwt.vc.*
 import eu.europa.ec.eudi.sdjwt.vc.SdJwtVcVerificationError.*
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cert.ProvideTrustSource
+import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cert.X5CShouldBe
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cert.X5CValidator
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.utils.getOrThrow
 import eu.europa.ec.eudi.verifier.endpoint.domain.Nonce
@@ -125,11 +126,13 @@ internal class SdJwtVcValidator(
     private val provideTrustSource: ProvideTrustSource,
     private val audience: VerifierId,
     private val statusListTokenValidator: StatusListTokenValidator?,
+    private val fallbackPidIssuerTrustSource: X5CShouldBe.Trusted? = null,
     typeMetadataPolicy: TypeMetadataPolicy,
 ) {
     private val sdJwtVcVerifier: SdJwtVcVerifier<SignedJWT> = run {
         val x509CertificateTrust = X509CertificateTrust.usingVct { chain: List<X509Certificate>, vct ->
-            val x5CShouldBe = provideTrustSource(vct)
+            val x5CShouldBe: X5CShouldBe? = provideTrustSource(vct)
+                ?: if (vct == PID_VCT) fallbackPidIssuerTrustSource else null
             if (x5CShouldBe != null) {
                 val x5cValidator = X5CValidator(x5CShouldBe)
                 val x5c = checkNotNull(chain.toNonEmptyListOrNull())
@@ -230,6 +233,8 @@ internal class SdJwtVcValidator(
             }
         }
 }
+
+private const val PID_VCT = "urn:eudi:pid:1"
 
 private val Throwable.description: String
     get() = when (this) {

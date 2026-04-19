@@ -34,6 +34,7 @@ import eu.europa.ec.eudi.verifier.endpoint.adapter.input.timer.ScheduleTimeoutPr
 import eu.europa.ec.eudi.verifier.endpoint.adapter.input.web.*
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cert.ProvideTrustSource
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cert.TrustSources
+import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cert.X5CShouldBe
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cfg.GenerateRequestIdNimbus
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.cfg.GenerateTransactionIdNimbus
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.jose.CreateJarNimbus
@@ -54,11 +55,14 @@ import eu.europa.ec.eudi.verifier.endpoint.adapter.out.sdjwtvc.StatusListTokenVa
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.sdjwtvc.ValidateJsonSchema
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.tl.FetchTLCertificatesDSS
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.x509.ParsePemEncodedX509CertificateChainWithNimbus
+import eu.europa.ec.eudi.verifier.endpoint.adapter.out.utils.getOrThrow
 import eu.europa.ec.eudi.verifier.endpoint.domain.*
 import eu.europa.ec.eudi.verifier.endpoint.port.input.*
 import eu.europa.ec.eudi.verifier.endpoint.port.out.cfg.CreateQueryWalletResponseRedirectUri
 import eu.europa.ec.eudi.verifier.endpoint.port.out.cfg.GenerateResponseCode
 import eu.europa.ec.eudi.verifier.endpoint.port.out.tl.FetchTLCertificates
+import eu.europa.ec.eudi.verifier.endpoint.port.out.x509.ParsePemEncodedX509CertificateChain
+import eu.europa.ec.eudi.verifier.endpoint.port.out.x509.x5cShouldBeTrustedOrNull
 import io.ktor.client.*
 import io.ktor.client.engine.*
 import io.ktor.client.engine.apache.*
@@ -228,7 +232,13 @@ internal fun beans(clock: Clock) = beans {
     // Default SdJwtVcValidator
     bean<SdJwtVcValidator> {
         val trustSources = ref<TrustSources>()
-        sdJwtVcValidator(trustSources::invoke)
+        val localPidIssuerTrustSource = env.readOptionalTextResource("verifier.irishlife.pidIssuerChain.path")
+            ?.let { pem ->
+                ref<ParsePemEncodedX509CertificateChain>()
+                    .x5cShouldBeTrustedOrNull(pem)
+                    .getOrThrow()
+            }
+        sdJwtVcValidator(trustSources::invoke, localPidIssuerTrustSource)
     }
 
     bean {
@@ -245,7 +255,7 @@ internal fun beans(clock: Clock) = beans {
         ValidateSdJwtVc(
             sdJwtVcValidatorFactory = { userProvided ->
                 val appDefault = ref<SdJwtVcValidator>()
-                userProvided?.let { sdJwtVcValidator { userProvided } } ?: appDefault
+                userProvided?.let { sdJwtVcValidator(provideTrustSource = { userProvided }) } ?: appDefault
             },
             ref(),
         )
@@ -256,7 +266,7 @@ internal fun beans(clock: Clock) = beans {
             config = ref(),
             sdJwtVcValidatorFactory = { userProvided ->
                 val appDefault = ref<SdJwtVcValidator>()
-                userProvided?.let { sdJwtVcValidator { userProvided } } ?: appDefault
+                userProvided?.let { sdJwtVcValidator(provideTrustSource = { userProvided }) } ?: appDefault
             },
             deviceResponseValidatorFactory = { userProvided ->
                 val appDefault = ref<DeviceResponseValidator>()
@@ -497,10 +507,12 @@ private fun BeanSupplierContext.deviceResponseValidator(
 
 private fun BeanSupplierContext.sdJwtVcValidator(
     provideTrustSource: ProvideTrustSource,
+    fallbackPidIssuerTrustSource: X5CShouldBe.Trusted? = null,
 ): SdJwtVcValidator = SdJwtVcValidator(
     provideTrustSource = provideTrustSource,
     audience = ref<VerifierConfig>().verifierId,
     provider<StatusListTokenValidator>().ifAvailable,
+    fallbackPidIssuerTrustSource = fallbackPidIssuerTrustSource,
     typeMetadataPolicy = ref<TypeMetadataPolicy>(),
 )
 

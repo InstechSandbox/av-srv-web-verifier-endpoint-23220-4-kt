@@ -100,6 +100,15 @@ if [ -n "${VERIFIER_PID_ISSUER_CERT_DIR:-}" ] && [ -z "${VERIFIER_IRISHLIFE_PIDI
     "$VERIFIER_PID_ISSUER_CERT_DIR/PIDIssuerCAUT01.pem" \
     "$VERIFIER_PID_ISSUER_CERT_DIR/PID-DS-LOCAL-UT_cert.pem" \
     "$VERIFIER_PID_ISSUER_CERT_DIR/PID-DS-0001_UT_cert.pem")
+
+  case "$(basename "$verifier_pid_issuer_chain_file")" in
+    PID-DS-LOCAL-UT_cert.pem|PID-DS-0001_UT_cert.pem)
+      printf 'Local verifier startup refused to use SD-JWT DS leaf as issuer_chain: %s\n' "$verifier_pid_issuer_chain_file" >&2
+      printf 'Refresh local certs so the IACA trust anchor exists, then restart the stack.\n' >&2
+      exit 1
+      ;;
+  esac
+
   VERIFIER_IRISHLIFE_PIDISSUERCHAIN_PATH="file:/opt/verifier/local-issuer-certs/$(basename "$verifier_pid_issuer_chain_file")"
 fi
 
