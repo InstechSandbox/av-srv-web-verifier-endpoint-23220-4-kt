@@ -46,6 +46,31 @@ VERIFIER_BACKEND_CONTAINER_NAME=${VERIFIER_BACKEND_CONTAINER_NAME:-verifier-back
 VERIFIER_UI_CONTAINER_NAME=${VERIFIER_UI_CONTAINER_NAME:-verifier-ui${VERIFIER_STACK_SUFFIX}}
 VERIFIER_HAPROXY_CONTAINER_NAME=${VERIFIER_HAPROXY_CONTAINER_NAME:-verifier-haproxy${VERIFIER_STACK_SUFFIX}}
 
+derive_default_compose_project_name() {
+  default_stack=true
+  discriminator=${VERIFIER_STACK_SUFFIX:-}
+
+  if [ "$VERIFIER_TLS_HOST_PORT" != "443" ] || [ "$VERIFIER_BACKEND_HOST_PORT" != "8080" ] || [ "$VERIFIER_UI_HOST_PORT" != "4300" ]; then
+    default_stack=false
+  fi
+
+  if [ "$VERIFIER_BACKEND_CONTAINER_NAME" != "verifier-backend" ] || [ "$VERIFIER_UI_CONTAINER_NAME" != "verifier-ui" ] || [ "$VERIFIER_HAPROXY_CONTAINER_NAME" != "verifier-haproxy" ]; then
+    default_stack=false
+  fi
+
+  if [ -z "$discriminator" ] && [ "$default_stack" != true ]; then
+    discriminator="$VERIFIER_TLS_HOST_PORT-$VERIFIER_BACKEND_HOST_PORT-$VERIFIER_UI_HOST_PORT"
+  fi
+
+  if [ -n "$discriminator" ]; then
+    printf '%s\n' "$discriminator" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | awk 'NF { print "verifier-" $0 }'
+  fi
+}
+
+if [ -z "${COMPOSE_PROJECT_NAME:-}" ]; then
+  COMPOSE_PROJECT_NAME=$(derive_default_compose_project_name)
+fi
+
 if [ "$VERIFIER_TLS_HOST_PORT" = "443" ]; then
   verifier_public_port_suffix=
 else
@@ -83,6 +108,9 @@ export VERIFIER_PID_ISSUER_CERT_DIR VERIFIER_IRISHLIFE_PIDISSUERCHAIN_PATH
 export VERIFIER_SHARED_CERT_FILE VERIFIER_SHARED_KEY_FILE
 export VERIFIER_TLS_HOST_PORT VERIFIER_BACKEND_HOST_PORT VERIFIER_UI_HOST_PORT
 export VERIFIER_BACKEND_CONTAINER_NAME VERIFIER_UI_CONTAINER_NAME VERIFIER_HAPROXY_CONTAINER_NAME
+if [ -n "${COMPOSE_PROJECT_NAME:-}" ]; then
+  export COMPOSE_PROJECT_NAME
+fi
 
 if [ ! -f "$haproxy_template" ]; then
   printf 'HAProxy template not found at %s\n' "$haproxy_template" >&2
@@ -138,6 +166,9 @@ fi
 
 cat <<EOF
 Verifier stack is starting.
+
+Compose project:
+  ${COMPOSE_PROJECT_NAME:-default}
 
 UI and public verifier URL:
   ${VERIFIER_PUBLIC_URL}
