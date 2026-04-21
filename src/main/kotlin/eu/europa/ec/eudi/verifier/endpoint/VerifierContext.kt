@@ -56,7 +56,6 @@ import eu.europa.ec.eudi.verifier.endpoint.adapter.out.sdjwtvc.ValidateJsonSchem
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.tl.FetchTLCertificatesDSS
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.utils.getOrThrow
 import eu.europa.ec.eudi.verifier.endpoint.adapter.out.x509.ParsePemEncodedX509CertificateChainWithNimbus
-import eu.europa.ec.eudi.verifier.endpoint.adapter.out.utils.getOrThrow
 import eu.europa.ec.eudi.verifier.endpoint.domain.*
 import eu.europa.ec.eudi.verifier.endpoint.port.input.*
 import eu.europa.ec.eudi.verifier.endpoint.port.out.cfg.CreateQueryWalletResponseRedirectUri
