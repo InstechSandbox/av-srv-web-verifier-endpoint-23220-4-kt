@@ -16,6 +16,7 @@ services:
       VERIFIER_REQUESTJWT_REQUESTURIMETHOD: Get
       VERIFIER_RESPONSE_MODE: DirectPost
       VERIFIER_AUTHORIZATIONREQUESTSCHEME: haip-vp
+      MANAGEMENT_HEALTH_MAIL_ENABLED: ${MANAGEMENT_HEALTH_MAIL_ENABLED:-false}
     volumes:
       - ${VERIFIER_PID_ISSUER_CERT_DIR:-./local/certs}:/opt/verifier/local-issuer-certs:ro
 
