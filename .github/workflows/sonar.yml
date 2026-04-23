@@ -5,15 +5,25 @@ on:
 jobs:
   check-secrets:
     name: Check secrets presence
+    outputs:
+      skip: ${{ steps.sonar-token.outputs.skip }}
     env:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     runs-on: ubuntu-latest
     steps:
-      - run: if [[ -z "$SONAR_TOKEN" ]]; then exit 1; fi
+      - id: sonar-token
+        run: |
+          if [[ -z "$SONAR_TOKEN" ]]; then
+            echo "SonarCloud skipped because SONAR_TOKEN is not configured."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
   analysis:
     name: Analysis
     needs: check-secrets
+    if: needs.check-secrets.outputs.skip != 'true'
     env:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       DEFECT_DOJO_TOKEN: ${{ secrets.DOJO_TOKEN }}
